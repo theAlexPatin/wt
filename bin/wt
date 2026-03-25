@@ -1,0 +1,94 @@
+#!/usr/bin/env node
+
+// Entry point for wt. On first run, installs the shell wrapper function.
+// After that, the shell function intercepts `wt` calls — this bin only
+// runs if the function isn't set up yet OR for non-cd operations.
+
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+
+const srcDir = path.resolve(__dirname, "..", "src");
+const cliPath = path.join(srcDir, "cli.js");
+
+// Check if shell function is set up
+const shell = path.basename(process.env.SHELL || "");
+const rcFiles = { zsh: ".zshrc", bash: ".bashrc", fish: null };
+const rcName = rcFiles[shell];
+const rcFile = rcName ? path.join(os.homedir(), rcName) : null;
+
+const SHELL_FUNC_ZSH_BASH = `wt() {
+  local out
+  out="$(command wt "$@")" || { [ -n "$out" ] && echo "$out"; return 1; }
+  if [[ "$out" == __wt_cd:* ]]; then cd "\${out#__wt_cd:}"; else [ -n "$out" ] && echo "$out"; fi
+}`;
+
+const SHELL_FUNC_FISH = `function wt
+  set -l out (command wt $argv)
+  or begin; [ -n "$out" ] && echo $out; return 1; end
+  if string match -q '__wt_cd:*' -- $out
+    cd (string replace '__wt_cd:' '' -- $out)
+  else if [ -n "$out" ]
+    echo $out
+  end
+end`;
+
+function installShellFunction() {
+  if (!rcFile) {
+    if (shell === "fish") {
+      const fishDir = path.join(
+        os.homedir(),
+        ".config",
+        "fish",
+        "functions"
+      );
+      const fishFile = path.join(fishDir, "wt.fish");
+      if (!fs.existsSync(fishFile)) {
+        fs.mkdirSync(fishDir, { recursive: true });
+        fs.writeFileSync(fishFile, SHELL_FUNC_FISH + "\n");
+        console.log(`\n\x1b[32m>\x1b[0m Added wt function to ${fishFile}`);
+        console.log(`\nRestart your shell, then try: \x1b[1mwt new my-feature\x1b[0m\n`);
+        return true;
+      }
+    } else {
+      console.log("\nAdd this to your shell config:\n");
+      console.log(SHELL_FUNC_ZSH_BASH);
+      console.log("");
+    }
+    return false;
+  }
+
+  const content = fs.existsSync(rcFile) ? fs.readFileSync(rcFile, "utf8") : "";
+
+  if (content.includes("wt()")) {
+    // Already installed — user just hasn't restarted.
+    // Run the CLI directly (cd won't work but everything else will).
+    return false;
+  }
+
+  const block = [
+    "",
+    "# wt — git worktree manager (https://github.com/thealexpatin/wt)",
+    SHELL_FUNC_ZSH_BASH,
+    "",
+  ].join("\n");
+
+  fs.appendFileSync(rcFile, block);
+  console.log(`\n\x1b[32m>\x1b[0m Added wt shell function to ${rcFile}`);
+  return true;
+}
+
+// Install shell function if needed, then always run the CLI directly.
+// The shell function handles `cd` in future invocations — but for this
+// first run (or when called directly as `command wt`), the CLI still works
+// for everything except changing the caller's directory.
+const installed = installShellFunction();
+if (installed && process.argv.length <= 2) {
+  console.log(`\nRestart your shell, then try: \x1b[1mwt new my-feature\x1b[0m\n`);
+  process.exit(0);
+}
+
+// Run the CLI directly — cd commands output __wt_cd: lines that the
+// shell function picks up. When run without the function, those lines
+// print as-is (harmless, user just needs to restart their shell).
+require(cliPath);

@@ -12,10 +12,12 @@
     "worktree",
     "worktrees",
     "cli",
-    "zsh"
+    "zsh",
+    "bash",
+    "fish"
   ],
   "bin": {
-    "wt-setup": "bin/setup.sh"
+    "wt": "bin/wt"
   },
   "files": [
     "src/",
@@ -23,5 +25,8 @@
   ],
   "scripts": {
     "test": "bash tests/run.sh"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.1.0"
   }
 }
