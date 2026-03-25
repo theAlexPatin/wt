@@ -1,0 +1,27 @@
+{
+  "name": "@nitap/wt",
+  "version": "0.1.0",
+  "description": "A fast, ergonomic CLI for managing git worktrees",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thealexpatin/wt"
+  },
+  "keywords": [
+    "git",
+    "worktree",
+    "worktrees",
+    "cli",
+    "zsh"
+  ],
+  "bin": {
+    "wt-setup": "bin/setup.sh"
+  },
+  "files": [
+    "src/",
+    "bin/"
+  ],
+  "scripts": {
+    "test": "bash tests/run.sh"
+  }
+}
