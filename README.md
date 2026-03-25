@@ -20,50 +20,38 @@ Git worktrees are powerful but tedious to manage by hand. You end up with long `
 - Auto-detecting context from your cwd — no need to specify the repo
 - Matching branch names to worktree names automatically
 - Running your project's setup script on creation (symlink caches, copy `.env` files)
-- Providing interactive pickers with graceful fallback: [gum](https://github.com/charmbracelet/gum) when installed, numbered prompts otherwise
+- Providing interactive pickers when you don't pass arguments
 
 <br>
 
 ## Install
 
-**Requirements:** zsh, git 2.17+. Optional: [gum](https://github.com/charmbracelet/gum) for enhanced interactive pickers.
+**Requirements:** Node.js 18+, git 2.17+. Works with zsh, bash, and fish.
 
 ```sh
 npm install -g @nitap/wt
-wt-setup
+wt
 ```
 
-Or with yarn:
-
-```sh
-yarn global add @nitap/wt
-wt-setup
-```
-
-Then restart your shell (or `source ~/.zshrc`).
-
-`wt-setup` adds a shell function to your `.zshrc` that sources the installed files — this is needed because `wt` uses `cd` to change your working directory, which only works from a sourced function.
-
-<details>
-<summary><strong>Install from source</strong></summary>
-
-```sh
-git clone https://github.com/thealexpatin/wt.git
-cd wt
-bash install.sh
-```
-
-This copies the source files to `~/.wt` and adds the shell function to your `.zshrc`.
-
-</details>
+The first time you run `wt`, it automatically adds a shell function to your config (`.zshrc`, `.bashrc`, or `~/.config/fish/functions/wt.fish`) and you're ready to go. It'll prompt you to configure defaults on first real use.
 
 <details>
 <summary><strong>Manual install</strong></summary>
 
-Copy the `src/` directory wherever you like and add this to your `.zshrc`:
+If you'd rather not use the auto-setup, clone the repo and add the shell wrapper yourself:
 
 ```sh
-wt() { source "/path/to/wt/src/main.sh" "$@" }
+npm install -g @nitap/wt
+```
+
+Then add this to your `.zshrc` or `.bashrc`:
+
+```sh
+wt() {
+  local out
+  out="$(command wt "$@")" || { [ -n "$out" ] && echo "$out"; return 1; }
+  if [[ "$out" == __wt_cd:* ]]; then cd "${out#__wt_cd:}"; else [ -n "$out" ] && echo "$out"; fi
+}
 ```
 
 </details>
@@ -75,7 +63,7 @@ wt() { source "/path/to/wt/src/main.sh" "$@" }
 npm uninstall -g @nitap/wt
 ```
 
-Then remove the `wt()` function from your `.zshrc`. Your worktrees in `~/.worktrees` are left untouched.
+Then remove the `wt` function from your shell config. Your worktrees in `~/.worktrees` are left untouched.
 
 </details>
 
@@ -203,7 +191,6 @@ Environment variables still work and take priority:
 |---|---|---|
 | `WT_ROOT` | `~/.worktrees` | Base directory where worktrees are stored (overrides config file) |
 | `WT_CONFIG_FILE` | `~/.wt/config.json` | Global config file location |
-| `WT_INSTALL_DIR` | `~/.wt` | Where the wt source files live |
 
 ```sh
 # Example: store worktrees under ~/trees instead
@@ -237,6 +224,18 @@ The hero GIF is generated from `demo.tape` using [vhs](https://github.com/charmb
 ```sh
 vhs demo.tape
 ```
+
+<br>
+
+## Testing
+
+Run the CLI test suite with:
+
+```sh
+npm test
+```
+
+The tests are in `tests/run.sh` and use isolated temp homes/repos so they don't touch your local `~/.wt` state.
 
 <br>
 
