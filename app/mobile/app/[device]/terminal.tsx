@@ -3,6 +3,7 @@ import {
   View,
   Text,
   TextInput,
+  Image,
   Pressable,
   StyleSheet,
   KeyboardAvoidingView,
@@ -48,6 +49,15 @@ const ACTION_ROW_2 = [
   { label: "←", data: "\x1b[D", repeat: true },
   { label: "↓", data: "\x1b[B", repeat: true },
   { label: "→", data: "\x1b[C", repeat: true },
+];
+
+const COMMANDS = [
+  { cmd: "cc",    type: "image" as const, source: require("../../assets/commands/claude.png"), bg: "#E07B39", iconSize: 26, tintColor: "#fff" as string | undefined },
+  { cmd: "wt",    type: "image" as const, source: require("../../assets/commands/wt.png"), bg: undefined, iconSize: 44, tintColor: undefined },
+  { cmd: "codex", type: "image" as const, source: require("../../assets/commands/codex.png"), bg: "#2D6BE4", iconSize: 28, tintColor: undefined },
+  { cmd: "amp",   type: "image" as const, source: require("../../assets/commands/amp.png"), bg: undefined, iconSize: 28, tintColor: undefined },
+  { cmd: "owner", type: "image" as const, source: require("../../assets/commands/owner.png"), bg: "#0CB230", iconSize: 40, tintColor: undefined },
+  { cmd: "df",    label: ".df", type: "text" as const,  bg: "rgba(255,255,255,0.15)", color: "#ccc", iconSize: undefined, source: undefined },
 ];
 
 const REPEAT_DELAY = 400;
@@ -120,9 +130,10 @@ export default function TerminalScreen() {
   const [sessionIdx, setSessionIdx] = useState(parseInt(initialIndex ?? "0", 10));
   const [paneIdx, setPaneIdx] = useState(parseInt(initialPaneIndex ?? "0", 10));
   const pageScrollRef = useRef<ScrollView>(null);
-  const [activePage, setActivePage] = useState(0);
+  const [activePage, setActivePage] = useState(1); // logical: 0=commands, 1=input, 2=keystrokes
   const [barWidth, setBarWidth] = useState(SCREEN_WIDTH - 16);
   const [paneGridVisible, setPaneGridVisible] = useState(false);
+  const initialScrollRef = useRef(false);
 
   const currentSession = sessions[sessionIdx];
   const tabColor = currentSession?.tabColor ?? "#555";
@@ -163,7 +174,7 @@ export default function TerminalScreen() {
   useEffect(() => {
     const showSub = Keyboard.addListener("keyboardDidShow", () => {
       setKeyboardVisible(true);
-      if (activePage === 1) goToPage(0);
+      if (activePage === 2) goToPage(1);
     });
     const hideSub = Keyboard.addListener("keyboardDidHide", () => setKeyboardVisible(false));
     return () => { showSub.remove(); hideSub.remove(); };
@@ -208,16 +219,30 @@ export default function TerminalScreen() {
     setInputText("");
   };
 
+  // Infinite scroll: 5 physical pages [Keystrokes, CmdPalette, TextInput, Keystrokes, CmdPalette]
+  // Physical→Logical: 0→2, 1→0, 2→1, 3→2, 4→0
+  const physToLogical = [2, 0, 1, 2, 0];
+
   const onPageChange = useCallback((e: any) => {
     const width = barWidth || SCREEN_WIDTH - 16;
-    const page = Math.round(e.nativeEvent.contentOffset.x / width);
-    setActivePage(page);
+    const phys = Math.round(e.nativeEvent.contentOffset.x / width);
+    const logical = physToLogical[phys] ?? 1;
+    setActivePage(logical);
+
+    // Wrap around: jump silently to the canonical copy
+    if (phys === 0) {
+      setTimeout(() => pageScrollRef.current?.scrollTo({ x: 3 * width, animated: false }), 50);
+    } else if (phys === 4) {
+      setTimeout(() => pageScrollRef.current?.scrollTo({ x: 1 * width, animated: false }), 50);
+    }
   }, [barWidth]);
 
-  const goToPage = useCallback((page: number) => {
+  // Logical→Physical: 0(commands)→1, 1(input)→2, 2(keystrokes)→3
+  const goToPage = useCallback((logical: number) => {
     const width = barWidth || SCREEN_WIDTH - 16;
-    pageScrollRef.current?.scrollTo({ x: page * width, animated: true });
-    setActivePage(page);
+    const phys = [1, 2, 3][logical] ?? 2;
+    pageScrollRef.current?.scrollTo({ x: phys * width, animated: true });
+    setActivePage(logical);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, [barWidth]);
 
@@ -474,15 +499,14 @@ export default function TerminalScreen() {
         />
       </View>
 
-      {/* Swipeable input bar: page 1 = command input, page 2 = action keys */}
+      {/* Swipeable input bar: commands <-> text input <-> keystrokes (infinite cycle) */}
       <View style={[styles.inputContainer, { paddingBottom: keyboardVisible ? 4 : Math.max(insets.bottom, 8) }]}>
         <View style={styles.pageDots}>
-          <Pressable onPress={() => goToPage(0)} hitSlop={8}>
-            <View style={[styles.pageDot, activePage === 0 && { backgroundColor: tabColor, transform: [{ scale: 1.4 }] }]} />
-          </Pressable>
-          <Pressable onPress={() => goToPage(1)} hitSlop={8}>
-            <View style={[styles.pageDot, activePage === 1 && { backgroundColor: tabColor, transform: [{ scale: 1.4 }] }]} />
-          </Pressable>
+          {[0, 1, 2].map((p) => (
+            <Pressable key={p} onPress={() => goToPage(p)} hitSlop={8}>
+              <View style={[styles.pageDot, activePage === p && { backgroundColor: tabColor, transform: [{ scale: 1.4 }] }]} />
+            </Pressable>
+          ))}
         </View>
         <ScrollView
           ref={pageScrollRef}
@@ -493,10 +517,64 @@ export default function TerminalScreen() {
           keyboardShouldPersistTaps="always"
           scrollEventThrottle={16}
           onMomentumScrollEnd={onPageChange}
-          onLayout={(e) => setBarWidth(e.nativeEvent.layout.width)}
+          contentOffset={{ x: 2 * (SCREEN_WIDTH - 16), y: 0 }}
+          onLayout={(e) => {
+            const w = e.nativeEvent.layout.width;
+            setBarWidth(w);
+            if (!initialScrollRef.current) {
+              initialScrollRef.current = true;
+              pageScrollRef.current?.scrollTo({ x: 2 * w, animated: false });
+            }
+          }}
           style={styles.pageScroll}
         >
-          {/* Page 1: Command input */}
+          {/* Physical 0: Keystrokes (clone for infinite wrap) */}
+          <View style={[styles.actionsPage, { width: barWidth }]}>
+            <Pressable
+              style={styles.actionBubble}
+              onPress={() => { goToPage(1); inputRef.current?.focus(); }}
+            >
+              <Text style={styles.actionBubbleIcon}>{"⌨"}</Text>
+            </Pressable>
+            <View style={styles.actionsGrid}>
+              <View style={styles.actionsRow}>
+                {ACTION_ROW_1.map((a) => (
+                  <ActionKey key={a.label} {...a} tabColor={tabColor} sendRaw={sendRaw} />
+                ))}
+              </View>
+              <View style={styles.actionsRow}>
+                {ACTION_ROW_2.map((a) => (
+                  <ActionKey key={a.label} {...a} tabColor={tabColor} sendRaw={sendRaw} />
+                ))}
+              </View>
+            </View>
+          </View>
+
+          {/* Physical 1: Command Palette */}
+          <View style={[styles.commandPage, { width: barWidth }]}>
+            {COMMANDS.map((c) => (
+              <Pressable
+                key={c.cmd}
+                style={styles.commandItem}
+                onPress={() => {
+                  sendRaw(c.cmd + "\r");
+                  goToPage(1);
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+              >
+                <View style={[styles.commandBubble, c.bg ? { backgroundColor: c.bg } : undefined]}>
+                  {c.type === "image" ? (
+                    <Image source={c.source!} style={[styles.commandIcon, c.iconSize ? { width: c.iconSize, height: c.iconSize } : undefined, c.tintColor ? { tintColor: c.tintColor } : undefined]} resizeMode="contain" />
+                  ) : (
+                    <Text style={[styles.commandText, c.color ? { color: c.color } : undefined]}>{c.label}</Text>
+                  )}
+                </View>
+                <Text style={styles.commandName}>{c.cmd}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {/* Physical 2: Text Input (default) */}
           <View style={[styles.inputPage, { width: barWidth }]}>
             <Pressable
               style={styles.actionBubble}
@@ -553,11 +631,11 @@ export default function TerminalScreen() {
             </Pressable>
           </View>
 
-          {/* Page 2: Quick action keys */}
+          {/* Physical 3: Keystrokes */}
           <View style={[styles.actionsPage, { width: barWidth }]}>
             <Pressable
               style={styles.actionBubble}
-              onPress={() => { goToPage(0); inputRef.current?.focus(); }}
+              onPress={() => { goToPage(1); inputRef.current?.focus(); }}
             >
               <Text style={styles.actionBubbleIcon}>{"⌨"}</Text>
             </Pressable>
@@ -573,6 +651,30 @@ export default function TerminalScreen() {
                 ))}
               </View>
             </View>
+          </View>
+
+          {/* Physical 4: Command Palette (clone for infinite wrap) */}
+          <View style={[styles.commandPage, { width: barWidth }]}>
+            {COMMANDS.map((c) => (
+              <Pressable
+                key={c.cmd}
+                style={styles.commandItem}
+                onPress={() => {
+                  sendRaw(c.cmd + "\r");
+                  goToPage(1);
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+              >
+                <View style={[styles.commandBubble, c.bg ? { backgroundColor: c.bg } : undefined]}>
+                  {c.type === "image" ? (
+                    <Image source={c.source!} style={[styles.commandIcon, c.iconSize ? { width: c.iconSize, height: c.iconSize } : undefined, c.tintColor ? { tintColor: c.tintColor } : undefined]} resizeMode="contain" />
+                  ) : (
+                    <Text style={[styles.commandText, c.color ? { color: c.color } : undefined]}>{c.label}</Text>
+                  )}
+                </View>
+                <Text style={styles.commandName}>{c.cmd}</Text>
+              </Pressable>
+            ))}
           </View>
         </ScrollView>
       </View>
@@ -829,4 +931,40 @@ const styles = StyleSheet.create({
     alignSelf: "center",
   },
   sendText: { color: "#fff", fontSize: 18, fontWeight: "600", lineHeight: 18, marginTop: -1 },
+
+  // Command palette
+  commandPage: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-evenly",
+    paddingHorizontal: 4,
+  },
+  commandItem: {
+    alignItems: "center",
+    gap: 4,
+  },
+  commandBubble: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.1)",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  commandIcon: {
+    width: 28,
+    height: 28,
+  },
+  commandText: {
+    fontSize: 14,
+    fontWeight: "700",
+    fontFamily: Platform.OS === "ios" ? "SF Mono" : "monospace",
+    color: "#ccc",
+  },
+  commandName: {
+    color: "#666",
+    fontSize: 10,
+    fontWeight: "500",
+  },
 });

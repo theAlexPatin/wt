@@ -2,14 +2,11 @@ import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import app from "./routes";
 import { createPaneSession, handleMessage, cleanupStaleSessions, type TerminalSession } from "./pty";
+import { activeTerminals } from "./state";
 
 const PORT = parseInt(process.env.WT_SERVER_PORT || "7890", 10);
 
 const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
-
-// Track active terminal sessions per tmux session so we can dispose
-// the old one before creating a new one (prevents zoom/unzoom race)
-const activeTerminals = new Map<string, TerminalSession>();
 
 // WebSocket terminal route: /terminal/:session/:windowIndex/:paneIndex
 app.get(

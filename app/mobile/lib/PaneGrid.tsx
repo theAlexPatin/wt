@@ -79,10 +79,12 @@ export function PaneGrid({
     try {
       await splitPane(device, session.id, activePane.windowIndex, activePane.index);
       await refreshSession();
+      // Select the newly created pane (inserted right after the split source)
+      onSelectPane(activePaneIdx + 1);
     } catch {
       Alert.alert("Error", "Failed to split pane");
     }
-  }, [session, activePaneIdx, device, refreshSession]);
+  }, [session, activePaneIdx, device, refreshSession, onSelectPane]);
 
   const handleKill = useCallback(async (pane: SessionPane, idx: number) => {
     if (!session) return;
@@ -121,17 +123,9 @@ export function PaneGrid({
           <Text style={styles.headerTitle}>
             {session.panes.length} Pane{session.panes.length !== 1 ? "s" : ""}
           </Text>
-          <View style={styles.headerActions}>
-            <Pressable
-              style={[styles.splitBtn, { backgroundColor: tabColor }]}
-              onPress={handleSplit}
-            >
-              <Text style={styles.splitBtnText}>+</Text>
-            </Pressable>
-            <Pressable onPress={onClose} hitSlop={12}>
-              <Text style={[styles.doneText, { color: tabColor }]}>Done</Text>
-            </Pressable>
-          </View>
+          <Pressable onPress={onClose} hitSlop={12}>
+            <Text style={[styles.doneText, { color: tabColor }]}>Done</Text>
+          </Pressable>
         </View>
 
         {/* Grid */}
@@ -209,6 +203,18 @@ export function PaneGrid({
             );
           })}
         </ScrollView>
+
+        {/* FAB */}
+        <Pressable
+          style={({ pressed }) => [
+            styles.fab,
+            { backgroundColor: tabColor },
+            pressed && styles.fabPressed,
+          ]}
+          onPress={handleSplit}
+        >
+          <Text style={styles.fabText}>+</Text>
+        </Pressable>
       </View>
     </Modal>
   );
@@ -230,25 +236,6 @@ const styles = StyleSheet.create({
     color: "#e4e4e8",
     fontSize: 20,
     fontWeight: "700",
-  },
-  headerActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 16,
-  },
-  splitBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  splitBtnText: {
-    color: "#fff",
-    fontSize: 22,
-    fontWeight: "400",
-    lineHeight: 24,
-    marginTop: -1,
   },
   doneText: {
     fontSize: 17,
@@ -348,5 +335,30 @@ const styles = StyleSheet.create({
     color: "rgba(255,255,255,0.4)",
     fontSize: 10,
     fontWeight: "600",
+  },
+  fab: {
+    position: "absolute",
+    bottom: 40,
+    right: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  fabPressed: {
+    opacity: 0.8,
+    transform: [{ scale: 0.93 }],
+  },
+  fabText: {
+    color: "#fff",
+    fontSize: 28,
+    fontWeight: "400",
+    lineHeight: 30,
   },
 });

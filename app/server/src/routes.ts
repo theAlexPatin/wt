@@ -5,6 +5,7 @@ import { cors } from "hono/cors";
 import { Expo, type ExpoPushMessage, type ExpoPushTicket } from "expo-server-sdk";
 import { listSessions, listPanes, isTmuxRunning, createSession, killSession, renameSession, splitPane, killPane, capturePane } from "./tmux";
 import { readWtConfig, parseConfigPath } from "./worktrees";
+import { activeTerminals } from "./state";
 
 const UPLOAD_DIR = "/tmp/wt-uploads";
 
@@ -196,11 +197,18 @@ app.delete("/push-token/:deviceId", async (c) => {
 });
 
 // Send push notification to all registered devices
+// Suppressed if the user is actively viewing the session on mobile
 app.post("/notify", async (c) => {
   const { title, body, session, windowIndex, paneIndex } = await c.req.json();
 
   if (!body) {
     return c.json({ error: "body is required" }, 400);
+  }
+
+  // If someone is actively viewing this session via a WebSocket terminal
+  // connection, skip the notification — they're already looking at it
+  if (session && activeTerminals.has(session)) {
+    return c.json({ ok: true, sent: 0, suppressed: true });
   }
 
   if (pushTokens.size === 0) {
