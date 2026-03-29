@@ -1,4 +1,4 @@
-import type { Device, Session } from "./types";
+import type { Device, Session, SessionPane } from "./types";
 
 function baseUrl(device: Device): string {
   return `http://${device.host}:${device.port}`;
@@ -77,6 +77,47 @@ export async function registerPushToken(
   } catch {
     // Silent failure — server may be unreachable
   }
+}
+
+export async function splitPane(
+  device: Device,
+  sessionName: string,
+  windowIndex: number,
+  paneIndex: number,
+  direction: "horizontal" | "vertical" = "vertical"
+): Promise<{ panes: SessionPane[] }> {
+  const res = await fetch(`${baseUrl(device)}/sessions/${encodeURIComponent(sessionName)}/panes/split`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ windowIndex, paneIndex, direction }),
+  });
+  return res.json();
+}
+
+export async function killPane(
+  device: Device,
+  sessionName: string,
+  windowIndex: number,
+  paneIndex: number
+): Promise<{ panes: SessionPane[]; sessionKilled?: boolean }> {
+  const res = await fetch(
+    `${baseUrl(device)}/sessions/${encodeURIComponent(sessionName)}/panes/${windowIndex}/${paneIndex}`,
+    { method: "DELETE" }
+  );
+  return res.json();
+}
+
+export async function capturePane(
+  device: Device,
+  sessionName: string,
+  windowIndex: number,
+  paneIndex: number,
+  lines: number = 10
+): Promise<{ text: string }> {
+  const res = await fetch(
+    `${baseUrl(device)}/sessions/${encodeURIComponent(sessionName)}/panes/${windowIndex}/${paneIndex}/capture?lines=${lines}`
+  );
+  return res.json();
 }
 
 export function terminalWsUrl(

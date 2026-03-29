@@ -21,6 +21,7 @@ import * as ImagePicker from "expo-image-picker";
 import { useStore } from "../../lib/store";
 import { fetchSessions, terminalWsUrl, uploadFile } from "../../lib/api";
 import { TERMINAL_HTML } from "../../lib/terminalHtml";
+import { PaneGrid } from "../../lib/PaneGrid";
 import type { Session } from "../../lib/types";
 
 // ~4 lines of monospace text at fontSize 15
@@ -121,6 +122,7 @@ export default function TerminalScreen() {
   const pageScrollRef = useRef<ScrollView>(null);
   const [activePage, setActivePage] = useState(0);
   const [barWidth, setBarWidth] = useState(SCREEN_WIDTH - 16);
+  const [paneGridVisible, setPaneGridVisible] = useState(false);
 
   const currentSession = sessions[sessionIdx];
   const tabColor = currentSession?.tabColor ?? "#555";
@@ -394,30 +396,53 @@ export default function TerminalScreen() {
         </View>
       </View>
 
-      {/* Indicator bar: pane dots + pane count, centered */}
-      {currentSession && currentSession.panes.length > 1 && (
-        <Pressable onPress={Keyboard.dismiss} style={[styles.indicatorBar, { backgroundColor: bgColor + "f2" }]}>
+      {/* Indicator bar: pane dots + pane count, centered — always visible, tappable to open grid */}
+      {currentSession && (
+        <Pressable
+          onPress={() => {
+            if (keyboardVisible) {
+              Keyboard.dismiss();
+              setTimeout(() => setPaneGridVisible(true), 200);
+            } else {
+              setPaneGridVisible(true);
+            }
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          }}
+          style={[styles.indicatorBar, { backgroundColor: bgColor + "f2" }]}
+        >
           <View style={styles.indicatorCenter}>
-            <View style={styles.paneDots}>
-              {currentSession.panes.map((_p, i) => (
-                <View
-                  key={i}
-                  style={[
-                    styles.paneDot,
-                    {
-                      backgroundColor: currentSession.tabColor ?? "#555",
-                      opacity: i === paneIdx ? 1 : 0.3,
-                    },
-                  ]}
-                />
-              ))}
-            </View>
+            {currentSession.panes.length > 1 && (
+              <View style={styles.paneDots}>
+                {currentSession.panes.map((_p, i) => (
+                  <View
+                    key={i}
+                    style={[
+                      styles.paneDot,
+                      {
+                        backgroundColor: currentSession.tabColor ?? "#555",
+                        opacity: i === paneIdx ? 1 : 0.3,
+                      },
+                    ]}
+                  />
+                ))}
+              </View>
+            )}
             <View style={styles.paneWrap}>
-              <Text style={[styles.paneChevron, paneIdx === 0 && styles.paneChevronDim]}>{"◂"}</Text>
+              {currentSession.panes.length > 1 && (
+                <Text style={[styles.paneChevron, paneIdx === 0 && styles.paneChevronDim]}>{"◂"}</Text>
+              )}
               <Text style={styles.paneLabel}>
                 Pane {paneIdx + 1} / {currentSession.panes.length}
               </Text>
-              <Text style={[styles.paneChevron, paneIdx === currentSession.panes.length - 1 && styles.paneChevronDim]}>{"▸"}</Text>
+              {currentSession.panes.length > 1 && (
+                <Text style={[styles.paneChevron, paneIdx === currentSession.panes.length - 1 && styles.paneChevronDim]}>{"▸"}</Text>
+              )}
+            </View>
+            <View style={styles.paneGridIcon}>
+              <View style={[styles.gridSquare, styles.gridSquareFilled]} />
+              <View style={[styles.gridSquare, styles.gridSquareOutline]} />
+              <View style={[styles.gridSquare, styles.gridSquareFilled]} />
+              <View style={[styles.gridSquare, styles.gridSquareFilled]} />
             </View>
           </View>
         </Pressable>
@@ -552,6 +577,25 @@ export default function TerminalScreen() {
         </ScrollView>
       </View>
 
+      {/* Pane grid overlay */}
+      {currentSession && (
+        <PaneGrid
+          visible={paneGridVisible}
+          session={currentSession}
+          activePaneIdx={paneIdx}
+          device={device}
+          tabColor={tabColor}
+          onSelectPane={(idx) => {
+            setPaneIdx(idx);
+          }}
+          onClose={() => setPaneGridVisible(false)}
+          onSessionKilled={() => {
+            setPaneGridVisible(false);
+            router.back();
+          }}
+          onSessionsUpdate={(updated) => setSessions(updated)}
+        />
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -647,6 +691,26 @@ const styles = StyleSheet.create({
   paneLabel: { color: "#888", fontSize: 12 },
   paneChevron: { color: "#555", fontSize: 8 },
   paneChevronDim: { opacity: 0.25 },
+  paneGridIcon: {
+    marginLeft: 8,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    width: 14,
+    height: 14,
+    gap: 2,
+  },
+  gridSquare: {
+    width: 6,
+    height: 6,
+    borderRadius: 1.5,
+  },
+  gridSquareFilled: {
+    backgroundColor: "#555",
+  },
+  gridSquareOutline: {
+    borderWidth: 1.5,
+    borderColor: "#555",
+  },
 
   // Terminal
   terminalWrap: { flex: 1, position: "relative" },

@@ -7,6 +7,10 @@ const PORT = parseInt(process.env.WT_SERVER_PORT || "7890", 10);
 
 const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
+// Track active terminal sessions per tmux session so we can dispose
+// the old one before creating a new one (prevents zoom/unzoom race)
+const activeTerminals = new Map<string, TerminalSession>();
+
 // WebSocket terminal route: /terminal/:session/:windowIndex/:paneIndex
 app.get(
   "/terminal/:session/:window/:pane",
@@ -21,6 +25,14 @@ app.get(
 
     return {
       onOpen(_event, ws) {
+        // Dispose previous connection to this tmux session first
+        // so its unzoom completes before we zoom the new pane
+        const prev = activeTerminals.get(tmuxSession);
+        if (prev) {
+          prev.dispose();
+          activeTerminals.delete(tmuxSession);
+        }
+
         terminal = createPaneSession(
           {
             send: (data: string) => ws.send(data),
@@ -32,6 +44,7 @@ app.get(
           cols,
           rows
         );
+        activeTerminals.set(tmuxSession, terminal);
       },
       onMessage(event) {
         if (terminal) {
@@ -43,6 +56,10 @@ app.get(
       },
       onClose() {
         if (terminal) {
+          // Only dispose if we're still the active terminal for this session
+          if (activeTerminals.get(tmuxSession) === terminal) {
+            activeTerminals.delete(tmuxSession);
+          }
           terminal.dispose();
           terminal = null;
         }

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { Expo, type ExpoPushMessage, type ExpoPushTicket } from "expo-server-sdk";
-import { listSessions, listPanes, isTmuxRunning, createSession, killSession, renameSession } from "./tmux";
+import { listSessions, listPanes, isTmuxRunning, createSession, killSession, renameSession, splitPane, killPane, capturePane } from "./tmux";
 import { readWtConfig, parseConfigPath } from "./worktrees";
 
 const UPLOAD_DIR = "/tmp/wt-uploads";
@@ -96,6 +96,61 @@ app.post("/sessions/:name/rename", async (c) => {
     return c.json({ ok: true });
   } catch {
     return c.json({ error: "Failed to rename session" }, 500);
+  }
+});
+
+// --- Pane operations ---
+
+app.post("/sessions/:name/panes/split", async (c) => {
+  const sessionName = decodeURIComponent(c.req.param("name"));
+  try {
+    const { windowIndex, paneIndex, direction } = await c.req.json();
+    splitPane(sessionName, windowIndex, paneIndex, direction);
+    const panes = await listPanes(sessionName);
+    return c.json({ panes: panes.map((p) => ({
+      index: p.index,
+      windowIndex: p.windowIndex,
+      windowName: p.windowName,
+      active: p.active,
+      size: `${p.width}x${p.height}`,
+    })) });
+  } catch {
+    return c.json({ error: "Failed to split pane" }, 500);
+  }
+});
+
+app.delete("/sessions/:name/panes/:windowIndex/:paneIndex", async (c) => {
+  const sessionName = decodeURIComponent(c.req.param("name"));
+  const windowIndex = parseInt(c.req.param("windowIndex"), 10);
+  const paneIndex = parseInt(c.req.param("paneIndex"), 10);
+  try {
+    const sessionKilled = killPane(sessionName, windowIndex, paneIndex);
+    if (sessionKilled) {
+      return c.json({ panes: [], sessionKilled: true });
+    }
+    const panes = await listPanes(sessionName);
+    return c.json({ panes: panes.map((p) => ({
+      index: p.index,
+      windowIndex: p.windowIndex,
+      windowName: p.windowName,
+      active: p.active,
+      size: `${p.width}x${p.height}`,
+    })), sessionKilled: false });
+  } catch {
+    return c.json({ error: "Failed to kill pane" }, 500);
+  }
+});
+
+app.get("/sessions/:name/panes/:windowIndex/:paneIndex/capture", async (c) => {
+  const sessionName = decodeURIComponent(c.req.param("name"));
+  const windowIndex = parseInt(c.req.param("windowIndex"), 10);
+  const paneIndex = parseInt(c.req.param("paneIndex"), 10);
+  const lines = parseInt(c.req.query("lines") ?? "10", 10);
+  try {
+    const text = capturePane(sessionName, windowIndex, paneIndex, lines);
+    return c.json({ text });
+  } catch {
+    return c.json({ error: "Failed to capture pane" }, 500);
   }
 });
 

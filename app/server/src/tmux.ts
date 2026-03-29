@@ -118,6 +118,45 @@ export function renameSession(oldName: string, newName: string): void {
   tmuxRun(["rename-session", "-t", oldName, newName]);
 }
 
+/** Split a pane, creating a new one adjacent to it */
+export function splitPane(
+  sessionName: string,
+  windowIndex: number,
+  paneIndex: number,
+  direction: "horizontal" | "vertical" = "vertical"
+): void {
+  const target = `${sessionName}:${windowIndex}.${paneIndex}`;
+  tmuxRun(["split-window", "-t", target, direction === "horizontal" ? "-h" : "-v"]);
+}
+
+/** Kill a specific pane. Returns true if the session was killed (last pane). */
+export function killPane(
+  sessionName: string,
+  windowIndex: number,
+  paneIndex: number
+): boolean {
+  const target = `${sessionName}:${windowIndex}.${paneIndex}`;
+  tmuxRun(["kill-pane", "-t", target]);
+  // Check if session still exists
+  try {
+    tmuxRun(["has-session", "-t", sessionName]);
+    return false;
+  } catch {
+    return true; // session was killed
+  }
+}
+
+/** Capture the last N lines of a pane's visible content */
+export function capturePane(
+  sessionName: string,
+  windowIndex: number,
+  paneIndex: number,
+  lines: number = 10
+): string {
+  const target = `${sessionName}:${windowIndex}.${paneIndex}`;
+  return tmuxRun(["capture-pane", "-t", target, "-p", "-J", "-S", String(-lines)]);
+}
+
 /** Check if tmux server is running */
 export async function isTmuxRunning(): Promise<boolean> {
   try {
