@@ -21,6 +21,26 @@ export async function fetchSessions(device: Device): Promise<Session[]> {
   return res.json();
 }
 
+export async function uploadFile(
+  device: Device,
+  uri: string,
+  filename: string,
+  mimeType: string
+): Promise<string> {
+  const form = new FormData();
+  form.append("file", {
+    uri,
+    name: filename,
+    type: mimeType,
+  } as any);
+  const res = await fetch(`${baseUrl(device)}/upload`, {
+    method: "POST",
+    body: form,
+  });
+  const json = await res.json();
+  return json.path;
+}
+
 export function terminalWsUrl(
   device: Device,
   sessionId: string,

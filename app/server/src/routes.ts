@@ -1,7 +1,11 @@
+import { writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { listSessions, listPanes, isTmuxRunning } from "./tmux";
 import { readWtConfig, parseConfigPath } from "./worktrees";
+
+const UPLOAD_DIR = "/tmp/wt-uploads";
 
 const app = new Hono();
 
@@ -59,6 +63,27 @@ app.get("/sessions", async (c) => {
   );
 
   return c.json(enriched);
+});
+
+app.post("/upload", async (c) => {
+  const body = await c.req.parseBody();
+  const file = body["file"];
+  if (!(file instanceof File)) {
+    return c.json({ error: "No file provided" }, 400);
+  }
+
+  if (!existsSync(UPLOAD_DIR)) {
+    mkdirSync(UPLOAD_DIR, { recursive: true });
+  }
+
+  const ext = file.name.includes(".") ? "." + file.name.split(".").pop() : "";
+  const filename = `${Date.now()}${ext}`;
+  const filePath = join(UPLOAD_DIR, filename);
+
+  const buffer = Buffer.from(await file.arrayBuffer());
+  writeFileSync(filePath, buffer);
+
+  return c.json({ path: filePath });
 });
 
 export default app;

@@ -17,8 +17,9 @@ import { WebView } from "react-native-webview";
 import { BlurView } from "expo-blur";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as ImagePicker from "expo-image-picker";
 import { useStore } from "../../lib/store";
-import { fetchSessions, terminalWsUrl } from "../../lib/api";
+import { fetchSessions, terminalWsUrl, uploadFile } from "../../lib/api";
 import { TERMINAL_HTML } from "../../lib/terminalHtml";
 import type { Session } from "../../lib/types";
 
@@ -39,7 +40,7 @@ const ACTION_ROW_1 = [
 ];
 
 const ACTION_ROW_2 = [
-  { label: "^A", data: "\x01" },
+  { label: "■", data: "\x03" },
   { label: "^E", data: "\x05" },
   { label: "^K", data: "\x0b" },
   { label: "^R", data: "\x12" },
@@ -471,9 +472,23 @@ export default function TerminalScreen() {
             </Pressable>
             <Pressable
               style={styles.actionBubble}
-              onPress={() => { sendRaw("\x03"); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
+              onPress={async () => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                const result = await ImagePicker.launchImageLibraryAsync({
+                  mediaTypes: ["images"],
+                  quality: 1,
+                });
+                if (result.canceled || !result.assets[0]) return;
+                const asset = result.assets[0];
+                const filename = asset.fileName ?? `photo.${asset.mimeType?.split("/")[1] ?? "png"}`;
+                const mimeType = asset.mimeType ?? "image/png";
+                try {
+                  const remotePath = await uploadFile(device!, asset.uri, filename, mimeType);
+                  sendRaw(remotePath);
+                } catch {}
+              }}
             >
-              <Text style={styles.actionBubbleIcon}>{"■"}</Text>
+              <Text style={styles.actionBubbleIcon}>{"📎"}</Text>
             </Pressable>
             <Pressable style={styles.inputWrap} onPress={() => inputRef.current?.focus()}>
               <BlurView intensity={40} tint="dark" style={styles.inputBlur}>
