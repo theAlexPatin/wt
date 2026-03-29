@@ -62,6 +62,9 @@ export function createPaneSession(
   // Create a grouped session (shares windows with original, own view state)
   tmux(tmuxPath, ["new-session", "-d", "-s", tempName, "-t", tmuxSession]);
 
+  // Hide the status bar — mobile has its own chrome
+  tmux(tmuxPath, ["set-option", "-t", tempName, "status", "off"]);
+
   // Select the correct window and pane, then zoom
   try {
     tmux(tmuxPath, ["select-window", "-t", `${tempName}:${windowIndex}`]);
