@@ -373,7 +373,7 @@ export default function TerminalScreen() {
     >
       {/* Custom header */}
       <View style={[styles.header, { paddingTop: insets.top, backgroundColor: bgColor }]}>
-        <Pressable onPress={() => router.back()} hitSlop={12} style={styles.headerBack}>
+        <Pressable onPress={() => router.dismissTo(`/${deviceId}`)} hitSlop={12} style={styles.headerBack}>
           <Text style={styles.headerBackChevron}>{"‹"}</Text>
           <Text style={styles.headerBackLabel} numberOfLines={1}>{device?.name ?? ""}</Text>
         </Pressable>
