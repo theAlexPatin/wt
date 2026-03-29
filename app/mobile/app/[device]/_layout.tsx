@@ -1,5 +1,5 @@
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { Pressable, Text } from "react-native";
+import { TouchableOpacity, Text } from "react-native";
 import { useStore } from "../../lib/store";
 
 export default function DeviceLayout() {
@@ -21,9 +21,9 @@ export default function DeviceLayout() {
         options={{
           title: current?.name ?? "Sessions",
           headerLeft: () => (
-            <Pressable onPress={() => router.back()} style={{ marginLeft: -8 }}>
+            <TouchableOpacity onPress={() => router.back()} activeOpacity={0.6} style={{ paddingHorizontal: 8 }}>
               <Text style={{ color: "#fff", fontSize: 17 }}>{"‹ Devices"}</Text>
-            </Pressable>
+            </TouchableOpacity>
           ),
         }}
       />
