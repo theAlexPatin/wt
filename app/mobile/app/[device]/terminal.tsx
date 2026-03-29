@@ -52,12 +52,12 @@ const ACTION_ROW_2 = [
 ];
 
 const COMMANDS = [
-  { cmd: "cc",    type: "image" as const, source: require("../../assets/commands/claude.png"), bg: "#E07B39", iconSize: 26, tintColor: "#fff" as string | undefined },
-  { cmd: "wt",    type: "image" as const, source: require("../../assets/commands/wt.png"), bg: undefined, iconSize: 44, tintColor: undefined },
-  { cmd: "codex", type: "image" as const, source: require("../../assets/commands/codex.png"), bg: "#2D6BE4", iconSize: 28, tintColor: undefined },
-  { cmd: "amp",   type: "image" as const, source: require("../../assets/commands/amp.png"), bg: undefined, iconSize: 28, tintColor: undefined },
-  { cmd: "owner", type: "image" as const, source: require("../../assets/commands/owner.png"), bg: "#0CB230", iconSize: 40, tintColor: undefined },
-  { cmd: "df",    label: ".df", type: "text" as const,  bg: "rgba(255,255,255,0.15)", color: "#ccc", iconSize: undefined, source: undefined },
+  { cmd: "cc",    type: "image" as const, source: require("../../assets/commands/claude.png"), bg: "#E07B39", iconSize: 26, tintColor: "#fff" as string | undefined, toPage: 1 },
+  { cmd: "wt",    type: "image" as const, source: require("../../assets/commands/wt.png"), bg: undefined, iconSize: 44, tintColor: undefined, toPage: 2 },
+  { cmd: "codex", type: "image" as const, source: require("../../assets/commands/codex.png"), bg: "#2D6BE4", iconSize: 28, tintColor: undefined, toPage: 1 },
+  { cmd: "amp",   type: "image" as const, source: require("../../assets/commands/amp.png"), bg: undefined, iconSize: 28, tintColor: undefined, toPage: 1 },
+  { cmd: "owner", type: "image" as const, source: require("../../assets/commands/owner.png"), bg: "#0CB230", iconSize: 40, tintColor: undefined, toPage: 2 },
+  { cmd: "df",    label: ".df", type: "text" as const,  bg: "rgba(255,255,255,0.15)", color: "#ccc", iconSize: undefined, source: undefined, toPage: 2 },
 ];
 
 const REPEAT_DELAY = 400;
@@ -558,7 +558,7 @@ export default function TerminalScreen() {
                 style={styles.commandItem}
                 onPress={() => {
                   sendRaw(c.cmd + "\r");
-                  goToPage(1);
+                  goToPage(c.toPage);
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 }}
               >
@@ -661,7 +661,7 @@ export default function TerminalScreen() {
                 style={styles.commandItem}
                 onPress={() => {
                   sendRaw(c.cmd + "\r");
-                  goToPage(1);
+                  goToPage(c.toPage);
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 }}
               >
