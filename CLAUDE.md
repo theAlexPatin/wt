@@ -32,6 +32,11 @@ A macOS Launch Agent auto-starts wt-server on login. This is a stopgap — plan 
 - **Logs**: `/tmp/wt-server.stdout.log`, `/tmp/wt-server.stderr.log`
 - **Node**: Pinned to `~/.nvm/versions/node/v22.12.0/bin` (Node 22 required)
 
+**Dev testing**: The launch agent runs the server in the background. After making changes to server code, you must restart it to pick up changes:
+```bash
+launchctl unload ~/Library/LaunchAgents/com.wt.server.plist && launchctl load ~/Library/LaunchAgents/com.wt.server.plist
+```
+
 To remove:
 ```bash
 launchctl unload ~/Library/LaunchAgents/com.wt.server.plist
