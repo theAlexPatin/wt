@@ -14,12 +14,23 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.wt.companion"
+      "bundleIdentifier": "com.wt.companion",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "plugins": [
       "expo-router",
       "expo-asset",
-      "expo-font"
-    ]
+      "expo-font",
+      "expo-dev-client"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "b6d031cb-f40d-48cf-8bad-dc2645b6bfbb"
+      }
+    },
+    "owner": "thealexpatin"
   }
 }
