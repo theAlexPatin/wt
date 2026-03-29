@@ -17,6 +17,7 @@ export default function RootLayout() {
           animation: "slide_from_right",
         }}
       >
+        <Stack.Screen name="index" options={{ title: "Devices" }} />
         <Stack.Screen name="[device]" options={{ headerShown: false }} />
       </Stack>
     </View>

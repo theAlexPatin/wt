@@ -11,6 +11,7 @@ import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { useStore } from "../../lib/store";
 import { fetchSessions } from "../../lib/api";
 import type { Session } from "../../lib/types";
+import { GestureHelpButton } from "../../lib/GestureHelp";
 
 export default function SessionListScreen() {
   const { device: deviceId } = useLocalSearchParams<{ device: string }>();
@@ -55,10 +56,20 @@ export default function SessionListScreen() {
   }
 
   const renderSession = ({ item, index }: { item: Session; index: number }) => {
-    const color = item.tabColor ?? "#555";
+    const isWorktree = !!item.tabColor;
+    const accent = item.tabColor ?? "#888";
     return (
       <Pressable
-        style={[styles.card, { borderLeftColor: color, borderLeftWidth: 3 }]}
+        style={({ pressed }) => [
+          styles.card,
+          isWorktree && {
+            borderLeftColor: accent,
+            borderLeftWidth: 3,
+            backgroundColor: accent + "0a",
+            borderColor: accent + "18",
+          },
+          pressed && styles.cardPressed,
+        ]}
         onPress={() =>
           router.push({
             pathname: "/[device]/terminal",
@@ -70,26 +81,40 @@ export default function SessionListScreen() {
           })
         }
       >
-        <View style={styles.cardTop}>
-          <Text style={[styles.sessionName, { color }]}>
-            {item.tabTitle}
-          </Text>
-          {item.attached && (
-            <View style={styles.attachedBadge}>
-              <Text style={styles.attachedText}>attached</Text>
+        <View style={styles.cardBody}>
+          <View style={styles.cardContent}>
+            <View style={styles.cardTop}>
+              <View style={styles.cardTitleRow}>
+                {isWorktree && (
+                  <View style={[styles.colorDot, { backgroundColor: accent }]} />
+                )}
+                <Text
+                  style={[styles.sessionName, isWorktree && { color: accent }]}
+                  numberOfLines={1}
+                >
+                  {item.tabTitle}
+                </Text>
+              </View>
+              {!item.attached && (
+                <View style={styles.detachedBadge}>
+                  <Text style={styles.detachedText}>detached</Text>
+                </View>
+              )}
             </View>
-          )}
+            <View style={styles.metaRow}>
+              {item.repo ? (
+                <Text style={styles.repo} numberOfLines={1}>
+                  {item.repo}{item.worktree ? ` / ${item.worktree}` : ""}
+                </Text>
+              ) : null}
+              <Text style={styles.paneCount}>
+                {item.panes.length} pane{item.panes.length !== 1 ? "s" : ""}
+                {item.windowCount > 1 ? ` · ${item.windowCount} windows` : ""}
+              </Text>
+            </View>
+          </View>
+          <Text style={[styles.chevron, isWorktree && { color: accent + "60" }]}>{"›"}</Text>
         </View>
-        {item.repo && (
-          <Text style={styles.repo}>
-            {item.repo}
-            {item.worktree ? ` / ${item.worktree}` : ""}
-          </Text>
-        )}
-        <Text style={styles.paneCount}>
-          {item.panes.length} pane{item.panes.length !== 1 ? "s" : ""} ·{" "}
-          {item.windowCount} window{item.windowCount !== 1 ? "s" : ""}
-        </Text>
       </Pressable>
     );
   };
@@ -116,6 +141,7 @@ export default function SessionListScreen() {
           </View>
         }
       />
+      <GestureHelpButton />
     </View>
   );
 }
@@ -127,26 +153,72 @@ const styles = StyleSheet.create({
     backgroundColor: "#141420",
     borderRadius: 14,
     padding: 16,
-    marginBottom: 12,
+    marginBottom: 10,
     borderWidth: 1,
     borderColor: "#1e1e2e",
+  },
+  cardPressed: {
+    opacity: 0.7,
+    transform: [{ scale: 0.98 }],
+  },
+  cardBody: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  cardContent: {
+    flex: 1,
+    minWidth: 0,
   },
   cardTop: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    gap: 8,
   },
-  sessionName: { fontSize: 17, fontWeight: "600" },
-  attachedBadge: {
-    backgroundColor: "rgba(52,211,153,0.15)",
+  cardTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flex: 1,
+    minWidth: 0,
+  },
+  colorDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+  },
+  sessionName: {
+    color: "#e4e4e8",
+    fontSize: 16,
+    fontWeight: "600",
+    flexShrink: 1,
+  },
+  chevron: {
+    color: "#333",
+    fontSize: 22,
+    marginLeft: 12,
+  },
+  detachedBadge: {
+    backgroundColor: "rgba(255,255,255,0.06)",
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 6,
+    flexShrink: 0,
   },
-  attachedText: { color: "#34d399", fontSize: 11, fontWeight: "600" },
-  repo: { color: "#888", fontSize: 13, marginTop: 6 },
-  paneCount: { color: "#555", fontSize: 12, marginTop: 4 },
+  detachedText: { color: "#555", fontSize: 11, fontWeight: "600" },
+  metaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 5,
+    gap: 8,
+  },
+  repo: {
+    color: "#888",
+    fontSize: 12,
+    flexShrink: 1,
+  },
+  paneCount: { color: "#555", fontSize: 12 },
   center: { flex: 1, alignItems: "center", justifyContent: "center", marginTop: 120 },
-  emptyText: { color: "#555", fontSize: 16 },
+  emptyText: { color: "#666", fontSize: 16 },
   errorText: { color: "#ef4444", fontSize: 16 },
 });

@@ -31,8 +31,8 @@ export default function DeviceLayout() {
         name="terminal"
         options={{
           title: "Terminal",
-          headerBackTitle: "",
-          animation: "slide_from_bottom",
+          headerBackVisible: false,
+          animation: "default",
           gestureEnabled: false,
         }}
       />

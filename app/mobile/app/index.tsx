@@ -13,6 +13,7 @@ import { useRouter, useFocusEffect } from "expo-router";
 import { useStore } from "../lib/store";
 import { checkHealth } from "../lib/api";
 import type { Device } from "../lib/types";
+import { GestureHelpButton } from "../lib/GestureHelp";
 
 const ACTION_WIDTH = 72;
 
@@ -198,6 +199,7 @@ export default function DeviceListScreen() {
       <Pressable style={styles.addButton} onPress={handleScan}>
         <Text style={styles.addButtonText}>Scan QR Code</Text>
       </Pressable>
+      <GestureHelpButton bottomOffset={56} />
     </View>
   );
 }
@@ -258,14 +260,15 @@ const styles = StyleSheet.create({
 
   // Empty
   empty: { alignItems: "center", marginTop: 120 },
-  emptyText: { color: "#555", fontSize: 18, fontWeight: "600" },
+  emptyText: { color: "#777", fontSize: 18, fontWeight: "600" },
   emptyHint: {
-    color: "#444",
+    color: "#666",
     fontSize: 14,
     marginTop: 8,
     textAlign: "center",
+    lineHeight: 20,
   },
-  code: { color: "#888", fontFamily: "monospace" },
+  code: { color: "#aaa", fontFamily: "monospace" },
 
   // Add button
   addButton: {

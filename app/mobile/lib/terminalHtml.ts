@@ -221,7 +221,17 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
           var msg = JSON.parse(data);
           if (msg.type === "init") init(msg);
           else if (msg.type === "input") sendInput(msg.data);
-          else if (msg.type === "reconnect") { disconnect(); if (term) term.clear(); connect(msg.wsUrl); }
+          else if (msg.type === "reconnect") {
+            disconnect();
+            var bgColor = msg.paneColor || "#0a0a0f";
+            document.documentElement.style.setProperty("--bg", bgColor);
+            document.body.style.background = bgColor;
+            if (term) {
+              term.options.theme = Object.assign({}, term.options.theme, { background: bgColor });
+              term.clear();
+            }
+            connect(msg.wsUrl);
+          }
           else if (msg.type === "disconnect") disconnect();
           else if (msg.type === "scroll") {
             // Forward to server — handled via tmux copy-mode for smooth scrolling

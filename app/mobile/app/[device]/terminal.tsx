@@ -10,13 +10,13 @@ import {
   Platform,
   ScrollView,
   Dimensions,
+  Animated,
 } from "react-native";
-import { useLocalSearchParams, useNavigation } from "expo-router";
+import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { WebView } from "react-native-webview";
 import { BlurView } from "expo-blur";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useHeaderHeight } from "@react-navigation/elements";
 import { useStore } from "../../lib/store";
 import { fetchSessions, terminalWsUrl } from "../../lib/api";
 import { TERMINAL_HTML } from "../../lib/terminalHtml";
@@ -101,8 +101,8 @@ export default function TerminalScreen() {
   const { device: deviceId, sessionIndex: initialIndex } =
     useLocalSearchParams<{ device: string; sessionId: string; sessionIndex: string }>();
   const navigation = useNavigation();
+  const router = useRouter();
   const insets = useSafeAreaInsets();
-  const headerHeight = useHeaderHeight();
   const devices = useStore((s) => s.devices);
   const device = devices.find((d) => d.id === deviceId);
 
@@ -111,6 +111,7 @@ export default function TerminalScreen() {
   const [inputText, setInputText] = useState("");
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [connected, setConnected] = useState(false);
+  const dotPulse = useRef(new Animated.Value(1)).current;
   const [webViewReady, setWebViewReady] = useState(false);
   const [initialized, setInitialized] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -122,40 +123,42 @@ export default function TerminalScreen() {
 
   const currentSession = sessions[sessionIdx];
   const tabColor = currentSession?.tabColor ?? "#555";
+  const bgColor = currentSession?.paneColor ?? "#0a0a0f";
 
   useEffect(() => {
     if (!device) return;
     fetchSessions(device).then(setSessions).catch(() => {});
   }, [device]);
 
-  // Set native header with session title + vertical session counter
+  // Hide native header — we render our own
   useEffect(() => {
-    const count = sessions.length;
-    const num = sessionIdx + 1;
-    navigation.setOptions({
-      headerTitle: () => (
-        <View style={styles.headerTitleWrap}>
-          <View style={[styles.headerDot, { backgroundColor: tabColor }]} />
-          <Text style={styles.headerTitle} numberOfLines={1}>
-            {currentSession?.tabTitle ?? "Terminal"}
-          </Text>
-          {count > 1 && (
-            <View style={styles.headerCounter}>
-              <Text style={[styles.headerCaret, sessionIdx === 0 && styles.headerCaretDim]}>{"▲"}</Text>
-              <Text style={styles.headerCountText}>{num}/{count}</Text>
-              <Text style={[styles.headerCaret, sessionIdx === count - 1 && styles.headerCaretDim]}>{"▼"}</Text>
-            </View>
-          )}
-        </View>
-      ),
-    });
-  }, [currentSession?.tabTitle, sessionIdx, sessions.length, tabColor, navigation]);
+    navigation.setOptions({ headerShown: false });
+  }, [navigation]);
+
+  // Pulse header dot when disconnected
+  useEffect(() => {
+    if (!connected && initialized) {
+      const anim = Animated.loop(
+        Animated.sequence([
+          Animated.timing(dotPulse, { toValue: 0.2, duration: 800, useNativeDriver: true }),
+          Animated.timing(dotPulse, { toValue: 1, duration: 800, useNativeDriver: true }),
+        ])
+      );
+      anim.start();
+      return () => anim.stop();
+    } else {
+      dotPulse.setValue(1);
+    }
+  }, [connected, initialized, dotPulse]);
 
   useEffect(() => {
-    const showSub = Keyboard.addListener("keyboardDidShow", () => setKeyboardVisible(true));
+    const showSub = Keyboard.addListener("keyboardDidShow", () => {
+      setKeyboardVisible(true);
+      if (activePage === 1) goToPage(0);
+    });
     const hideSub = Keyboard.addListener("keyboardDidHide", () => setKeyboardVisible(false));
     return () => { showSub.remove(); hideSub.remove(); };
-  }, []);
+  }, [activePage, goToPage]);
 
   // Connect to terminal when session/pane changes AND webview is ready
   useEffect(() => {
@@ -354,13 +357,36 @@ export default function TerminalScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={[styles.container, { backgroundColor: bgColor }]}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={headerHeight}
+      keyboardVerticalOffset={0}
     >
+      {/* Custom header */}
+      <View style={[styles.header, { paddingTop: insets.top, backgroundColor: bgColor }]}>
+        <Pressable onPress={() => router.back()} hitSlop={12} style={styles.headerBack}>
+          <Text style={styles.headerBackChevron}>{"‹"}</Text>
+          <Text style={styles.headerBackLabel} numberOfLines={1}>{device?.name ?? ""}</Text>
+        </Pressable>
+        <View style={styles.headerTitleWrap}>
+          <Animated.View style={[styles.headerDot, { backgroundColor: tabColor, opacity: dotPulse }]} />
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            {currentSession?.tabTitle ?? "Terminal"}
+          </Text>
+        </View>
+        <View style={styles.headerRight}>
+          {sessions.length > 1 && (
+            <View style={styles.headerCounter}>
+              <Text style={[styles.headerCaret, sessionIdx === 0 && styles.headerCaretDim]}>{"▲"}</Text>
+              <Text style={styles.headerCountText}>{sessionIdx + 1}/{sessions.length}</Text>
+              <Text style={[styles.headerCaret, sessionIdx === sessions.length - 1 && styles.headerCaretDim]}>{"▼"}</Text>
+            </View>
+          )}
+        </View>
+      </View>
+
       {/* Indicator bar: pane dots + pane count, centered */}
       {currentSession && currentSession.panes.length > 1 && (
-        <Pressable onPress={Keyboard.dismiss} style={styles.indicatorBar}>
+        <Pressable onPress={Keyboard.dismiss} style={[styles.indicatorBar, { backgroundColor: bgColor + "f2" }]}>
           <View style={styles.indicatorCenter}>
             <View style={styles.paneDots}>
               {currentSession.panes.map((_p, i) => (
@@ -394,7 +420,7 @@ export default function TerminalScreen() {
           source={{ html: TERMINAL_HTML }}
           style={[
             styles.webview,
-            { backgroundColor: currentSession?.paneColor ?? "#0a0a0f" },
+            { backgroundColor: bgColor },
           ]}
           onMessage={handleWebViewMessage}
           javaScriptEnabled
@@ -439,26 +465,27 @@ export default function TerminalScreen() {
           <View style={[styles.inputPage, { width: barWidth }]}>
             <Pressable
               style={styles.actionBubble}
-              onPress={() => sendRaw("\x1b")}
+              onPress={() => { sendRaw("\x1b"); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
             >
               <Text style={styles.actionBubbleIcon}>{"✕"}</Text>
             </Pressable>
             <Pressable
               style={styles.actionBubble}
-              onPress={() => sendRaw("\x03")}
+              onPress={() => { sendRaw("\x03"); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
             >
               <Text style={styles.actionBubbleIcon}>{"■"}</Text>
             </Pressable>
             <Pressable style={styles.inputWrap} onPress={() => inputRef.current?.focus()}>
               <BlurView intensity={40} tint="dark" style={styles.inputBlur}>
                 <View style={[styles.inputBorder, { borderColor: tabColor + "40" }]}>
+                  <Text style={styles.inputPrompt}>$</Text>
                   <TextInput
                     ref={inputRef}
                     style={styles.input}
                     pointerEvents="none"
                     value={inputText}
                     onChangeText={setInputText}
-                    placeholder="$ command"
+                    placeholder="command"
                     placeholderTextColor="#555"
                     autoCapitalize="none"
                     autoCorrect={false}
@@ -468,7 +495,7 @@ export default function TerminalScreen() {
                   />
                   <Pressable
                     style={[styles.sendBtn, { backgroundColor: tabColor }]}
-                    onPress={sendCommand}
+                    onPress={() => { sendCommand(); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
                   >
                     <Text style={styles.sendText}>{"↵"}</Text>
                   </Pressable>
@@ -500,6 +527,7 @@ export default function TerminalScreen() {
           </View>
         </ScrollView>
       </View>
+
     </KeyboardAvoidingView>
   );
 }
@@ -510,9 +538,36 @@ const styles = StyleSheet.create({
   errorText: { color: "#ef4444", fontSize: 16 },
 
   // Header
-  headerTitleWrap: {
+  header: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    backgroundColor: "#0a0a0f",
+  },
+  headerBack: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    minWidth: 32,
+    maxWidth: 120,
+  },
+  headerBackChevron: {
+    color: "#888",
+    fontSize: 22,
+    lineHeight: 22,
+  },
+  headerBackLabel: {
+    color: "#888",
+    fontSize: 15,
+    flexShrink: 1,
+  },
+  headerTitleWrap: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     gap: 8,
   },
   headerDot: {
@@ -526,23 +581,28 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     flexShrink: 1,
   },
+  headerRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    minWidth: 32,
+    justifyContent: "flex-end",
+  },
   headerCounter: {
     flexDirection: "column",
     alignItems: "center",
-    marginLeft: 2,
   },
   headerCaret: {
-    color: "#666",
-    fontSize: 6,
-    lineHeight: 8,
+    color: "#555",
+    fontSize: 8,
+    lineHeight: 10,
   },
   headerCaretDim: {
     opacity: 0.25,
   },
   headerCountText: {
     color: "#888",
-    fontSize: 10,
-    lineHeight: 12,
+    fontSize: 13,
+    lineHeight: 16,
   },
 
   // Indicator bar (pane navigation)
@@ -587,9 +647,9 @@ const styles = StyleSheet.create({
     paddingBottom: 6,
   },
   pageDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
     backgroundColor: "rgba(255,255,255,0.15)",
   },
   pageScroll: {
@@ -615,7 +675,7 @@ const styles = StyleSheet.create({
   },
   actionKey: {
     flex: 1,
-    height: 36,
+    height: 40,
     borderRadius: 8,
     backgroundColor: "rgba(255,255,255,0.08)",
     borderWidth: StyleSheet.hairlineWidth,
@@ -651,12 +711,18 @@ const styles = StyleSheet.create({
   },
   inputBorder: {
     flexDirection: "row",
-    alignItems: "flex-end",
+    alignItems: "center",
     borderRadius: 22,
     borderWidth: 1,
-    paddingLeft: 16,
+    paddingLeft: 14,
     paddingRight: 4,
     paddingVertical: 4,
+  },
+  inputPrompt: {
+    color: "#888",
+    fontSize: 15,
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    marginRight: 6,
   },
   input: {
     flex: 1,
@@ -673,6 +739,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
+    alignSelf: "flex-end",
     marginBottom: 2,
   },
   sendText: { color: "#fff", fontSize: 18, fontWeight: "600" },
