@@ -2,10 +2,14 @@ import { writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { listSessions, listPanes, isTmuxRunning } from "./tmux";
+import { Expo, type ExpoPushMessage, type ExpoPushTicket } from "expo-server-sdk";
+import { listSessions, listPanes, isTmuxRunning, createSession, killSession, renameSession } from "./tmux";
 import { readWtConfig, parseConfigPath } from "./worktrees";
 
 const UPLOAD_DIR = "/tmp/wt-uploads";
+
+const expo = new Expo();
+const pushTokens = new Map<string, string>(); // deviceId → ExpoPushToken
 
 const app = new Hono();
 
@@ -65,6 +69,36 @@ app.get("/sessions", async (c) => {
   return c.json(enriched);
 });
 
+app.post("/sessions", async (c) => {
+  try {
+    const name = createSession();
+    return c.json({ name });
+  } catch {
+    return c.json({ error: "Failed to create session" }, 500);
+  }
+});
+
+app.delete("/sessions/:name", async (c) => {
+  const name = decodeURIComponent(c.req.param("name"));
+  try {
+    killSession(name);
+    return c.json({ ok: true });
+  } catch {
+    return c.json({ error: "Failed to kill session" }, 500);
+  }
+});
+
+app.post("/sessions/:name/rename", async (c) => {
+  const oldName = decodeURIComponent(c.req.param("name"));
+  try {
+    const { name: newName } = await c.req.json();
+    renameSession(oldName, newName);
+    return c.json({ ok: true });
+  } catch {
+    return c.json({ error: "Failed to rename session" }, 500);
+  }
+});
+
 app.post("/upload", async (c) => {
   const body = await c.req.parseBody();
   const file = body["file"];
@@ -84,6 +118,75 @@ app.post("/upload", async (c) => {
   writeFileSync(filePath, buffer);
 
   return c.json({ path: filePath });
+});
+
+// Push notification token registration
+app.post("/push-token", async (c) => {
+  const { token, deviceId } = await c.req.json();
+  if (!token || !deviceId) {
+    return c.json({ error: "token and deviceId required" }, 400);
+  }
+  if (!Expo.isExpoPushToken(token)) {
+    return c.json({ error: "Invalid Expo push token" }, 400);
+  }
+  pushTokens.set(deviceId, token);
+  console.log(`Push token registered for device ${deviceId}`);
+  return c.json({ ok: true });
+});
+
+app.delete("/push-token/:deviceId", async (c) => {
+  const deviceId = decodeURIComponent(c.req.param("deviceId"));
+  pushTokens.delete(deviceId);
+  return c.json({ ok: true });
+});
+
+// Send push notification to all registered devices
+app.post("/notify", async (c) => {
+  const { title, body, session, windowIndex, paneIndex } = await c.req.json();
+
+  if (!body) {
+    return c.json({ error: "body is required" }, 400);
+  }
+
+  if (pushTokens.size === 0) {
+    return c.json({ ok: true, sent: 0 });
+  }
+
+  const messages: ExpoPushMessage[] = [];
+  for (const [deviceId, token] of pushTokens) {
+    messages.push({
+      to: token,
+      sound: "default",
+      title: title || "Wit",
+      body,
+      data: { deviceId, sessionId: session, windowIndex, paneIndex },
+    });
+  }
+
+  const chunks = expo.chunkPushNotifications(messages);
+  const tokensToRemove: string[] = [];
+
+  for (const chunk of chunks) {
+    try {
+      const tickets = await expo.sendPushNotificationsAsync(chunk);
+      tickets.forEach((ticket: ExpoPushTicket, i: number) => {
+        if (ticket.status === "error" && ticket.details?.error === "DeviceNotRegistered") {
+          const msg = chunk[i];
+          const deviceId = [...pushTokens.entries()].find(([, t]) => t === msg.to)?.[0];
+          if (deviceId) tokensToRemove.push(deviceId);
+        }
+      });
+    } catch (err) {
+      console.error("Failed to send push notifications:", err);
+    }
+  }
+
+  for (const id of tokensToRemove) {
+    pushTokens.delete(id);
+    console.log(`Removed invalid token for device ${id}`);
+  }
+
+  return c.json({ ok: true, sent: messages.length });
 });
 
 export default app;

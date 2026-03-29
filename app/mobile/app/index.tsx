@@ -42,9 +42,7 @@ function SwipeableCard({
         translateX.setValue(next);
       },
       onPanResponderRelease: (_, g) => {
-        const base = isOpen.current ? -ACTION_WIDTH : 0;
-        const final = base + g.dx;
-        const shouldOpen = final < -ACTION_WIDTH / 2 || g.vx < -0.3;
+        const shouldOpen = g.dx < 0 ? true : g.dx > 0 ? false : isOpen.current;
         const target = shouldOpen ? -ACTION_WIDTH : 0;
         isOpen.current = shouldOpen;
         Animated.spring(translateX, {
@@ -52,6 +50,15 @@ function SwipeableCard({
           useNativeDriver: true,
           bounciness: 0,
           speed: 20,
+        }).start();
+      },
+      onPanResponderTerminate: () => {
+        const target = isOpen.current ? -ACTION_WIDTH : 0;
+        Animated.spring(translateX, {
+          toValue: target,
+          useNativeDriver: true,
+          speed: 20,
+          bounciness: 0,
         }).start();
       },
     })
@@ -230,8 +237,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#ef4444",
     justifyContent: "center",
     alignItems: "center",
-    borderTopRightRadius: 14,
-    borderBottomRightRadius: 14,
   },
   deleteActionText: {
     color: "#fff",
@@ -242,7 +247,6 @@ const styles = StyleSheet.create({
   // Card
   card: {
     backgroundColor: "#141420",
-    borderRadius: 14,
     padding: 16,
     borderWidth: 1,
     borderColor: "#1e1e2e",

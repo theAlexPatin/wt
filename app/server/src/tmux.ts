@@ -1,6 +1,16 @@
 import { execFileSync } from "child_process";
+import { homedir } from "os";
 
 const SEP = "|||";
+
+/** Resolve tmux binary path once — Launch Agent PATH may not include /opt/homebrew/bin */
+const TMUX = (() => {
+  try {
+    return execFileSync("which", ["tmux"], { encoding: "utf-8" }).trim() || "tmux";
+  } catch {
+    return "tmux";
+  }
+})();
 
 export interface TmuxSession {
   name: string;
@@ -20,15 +30,15 @@ export interface TmuxPane {
   title: string;
 }
 
-function run(args: string[]): string {
-  return execFileSync(args[0]!, args.slice(1), { encoding: "utf-8" });
+function tmuxRun(args: string[]): string {
+  return execFileSync(TMUX, args, { encoding: "utf-8" });
 }
 
 /** List all tmux sessions with their @wt_config_path option */
 export async function listSessions(): Promise<TmuxSession[]> {
   try {
     const fmt = `#{session_name}${SEP}#{session_windows}${SEP}#{session_attached}${SEP}#{session_created}`;
-    const result = run(["tmux", "list-sessions", "-F", fmt]);
+    const result = tmuxRun(["list-sessions", "-F", fmt]);
 
     const sessions: TmuxSession[] = [];
 
@@ -42,7 +52,7 @@ export async function listSessions(): Promise<TmuxSession[]> {
 
       let configPath: string | undefined;
       try {
-        const optVal = execFileSync("tmux", ["show-options", "-t", name, "-v", "@wt_config_path"], {
+        const optVal = execFileSync(TMUX, ["show-options", "-t", name, "-v", "@wt_config_path"], {
           encoding: "utf-8",
           stdio: ["pipe", "pipe", "pipe"],
         }).trim();
@@ -70,7 +80,7 @@ export async function listSessions(): Promise<TmuxSession[]> {
 export async function listPanes(sessionName: string): Promise<TmuxPane[]> {
   try {
     const fmt = `#{pane_index}${SEP}#{window_index}${SEP}#{window_name}${SEP}#{pane_active}${SEP}#{pane_width}${SEP}#{pane_height}${SEP}#{pane_title}`;
-    const result = run(["tmux", "list-panes", "-t", sessionName, "-s", "-F", fmt]);
+    const result = tmuxRun(["list-panes", "-t", sessionName, "-s", "-F", fmt]);
 
     return result
       .trim()
@@ -93,10 +103,25 @@ export async function listPanes(sessionName: string): Promise<TmuxPane[]> {
   }
 }
 
+/** Create a new detached tmux session in $HOME, return its name */
+export function createSession(): string {
+  return tmuxRun(["new-session", "-d", "-P", "-F", "#{session_name}", "-c", homedir()]).trim();
+}
+
+/** Kill a tmux session by name */
+export function killSession(name: string): void {
+  tmuxRun(["kill-session", "-t", name]);
+}
+
+/** Rename a tmux session */
+export function renameSession(oldName: string, newName: string): void {
+  tmuxRun(["rename-session", "-t", oldName, newName]);
+}
+
 /** Check if tmux server is running */
 export async function isTmuxRunning(): Promise<boolean> {
   try {
-    execFileSync("tmux", ["has-session"]);
+    execFileSync(TMUX, ["has-session"]);
     return true;
   } catch {
     return false;

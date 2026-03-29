@@ -41,6 +41,44 @@ export async function uploadFile(
   return json.path;
 }
 
+export async function createSession(device: Device): Promise<{ name: string }> {
+  const res = await fetch(`${baseUrl(device)}/sessions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  return res.json();
+}
+
+export async function deleteSession(device: Device, name: string): Promise<void> {
+  await fetch(`${baseUrl(device)}/sessions/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function renameSession(device: Device, oldName: string, newName: string): Promise<void> {
+  await fetch(`${baseUrl(device)}/sessions/${encodeURIComponent(oldName)}/rename`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: newName }),
+  });
+}
+
+export async function registerPushToken(
+  device: Device,
+  token: string,
+  deviceId: string
+): Promise<void> {
+  try {
+    await fetch(`${baseUrl(device)}/push-token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, deviceId }),
+    });
+  } catch {
+    // Silent failure — server may be unreachable
+  }
+}
+
 export function terminalWsUrl(
   device: Device,
   sessionId: string,

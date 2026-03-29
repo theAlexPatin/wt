@@ -65,6 +65,18 @@ export function createPaneSession(
   // Hide the status bar — mobile has its own chrome
   tmux(tmuxPath, ["set-option", "-t", tempName, "status", "off"]);
 
+  // Ensure tmux sends exact 24-bit RGB colors instead of approximating to 256-color
+  // palette (e.g. #0c2d22 → palette 16 → #000000). Window-level bg= styles are shared
+  // across the grouped session and can't be removed without affecting the original.
+  try {
+    const overrides = tmux(tmuxPath, ["show-options", "-s", "terminal-overrides"]);
+    if (!overrides.includes("Tc")) {
+      tmux(tmuxPath, ["set-option", "-sa", "terminal-overrides", ",xterm-256color:Tc"]);
+    }
+  } catch {
+    try { tmux(tmuxPath, ["set-option", "-sa", "terminal-overrides", ",xterm-256color:Tc"]); } catch {}
+  }
+
   // Select the correct window and pane, then zoom
   try {
     tmux(tmuxPath, ["select-window", "-t", `${tempName}:${windowIndex}`]);

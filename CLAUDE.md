@@ -24,6 +24,20 @@ cd app/mobile && npx expo start
 
 Server runs on port 7890 by default (`WT_SERVER_PORT` env to override).
 
+### Launch Agent (temporary)
+
+A macOS Launch Agent auto-starts wt-server on login. This is a stopgap — plan is to replace it with a better long-term solution.
+
+- **Plist**: `~/Library/LaunchAgents/com.wt.server.plist`
+- **Logs**: `/tmp/wt-server.stdout.log`, `/tmp/wt-server.stderr.log`
+- **Node**: Pinned to `~/.nvm/versions/node/v22.12.0/bin` (Node 22 required)
+
+To remove:
+```bash
+launchctl unload ~/Library/LaunchAgents/com.wt.server.plist
+rm ~/Library/LaunchAgents/com.wt.server.plist
+```
+
 ## Server API
 
 ### `GET /health`

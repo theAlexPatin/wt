@@ -1,10 +1,100 @@
-import { Stack } from "expo-router";
+import { useEffect, useRef } from "react";
+import { Stack, router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { View, Image, Text, StyleSheet } from "react-native";
+import { View, Image, Text, StyleSheet, AppState } from "react-native";
+import * as Notifications from "expo-notifications";
+import { useStore } from "../lib/store";
+import { registerPushToken } from "../lib/api";
 
 const BG = "#0a0a0f";
+const EAS_PROJECT_ID = "b6d031cb-f40d-48cf-8bad-dc2645b6bfbb";
+
+// Show notifications even when app is foregrounded
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
+async function getPushToken(): Promise<string | null> {
+  const { status: existing } = await Notifications.getPermissionsAsync();
+  let finalStatus = existing;
+  if (existing !== "granted") {
+    const { status } = await Notifications.requestPermissionsAsync();
+    finalStatus = status;
+  }
+  if (finalStatus !== "granted") return null;
+  const token = await Notifications.getExpoPushTokenAsync({
+    projectId: EAS_PROJECT_ID,
+  });
+  return token.data;
+}
+
+async function registerWithAllDevices(token: string) {
+  const devices = useStore.getState().devices;
+  await Promise.allSettled(
+    devices.map((device) => registerPushToken(device, token, device.id))
+  );
+}
+
+function handleNotificationResponse(
+  response: Notifications.NotificationResponse
+) {
+  const data = response.notification.request.content.data;
+  if (data?.sessionId && data?.deviceId) {
+    router.push({
+      pathname: "/[device]/terminal",
+      params: {
+        device: data.deviceId as string,
+        sessionId: data.sessionId as string,
+        sessionIndex: "0",
+        paneIndex: String(data.paneIndex ?? 0),
+      },
+    });
+  }
+}
 
 export default function RootLayout() {
+  const setPushToken = useStore((s) => s.setPushToken);
+  const responseListener = useRef<Notifications.EventSubscription>(null);
+
+  useEffect(() => {
+    // Get push token and register with servers
+    getPushToken().then((token) => {
+      if (token) {
+        setPushToken(token);
+        registerWithAllDevices(token);
+      }
+    });
+
+    // Handle notification taps while app is running
+    responseListener.current =
+      Notifications.addNotificationResponseReceivedListener(
+        handleNotificationResponse
+      );
+
+    // Handle cold-start notification tap
+    Notifications.getLastNotificationResponseAsync().then((response) => {
+      if (response) handleNotificationResponse(response);
+    });
+
+    // Re-register tokens when app returns to foreground
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        const token = useStore.getState().pushToken;
+        if (token) registerWithAllDevices(token);
+      }
+    });
+
+    return () => {
+      responseListener.current?.remove();
+      subscription.remove();
+    };
+  }, []);
+
   return (
     <View style={styles.root}>
       <StatusBar style="light" />

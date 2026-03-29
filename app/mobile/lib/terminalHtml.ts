@@ -8,7 +8,8 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg, #0a0a0f); }
       #terminal { width: 100%; height: 100%; }
-      .xterm { padding: 4px; }
+      .xterm { padding: 4px; background-color: var(--bg, #0a0a0f) !important; }
+      .xterm-viewport { background-color: var(--bg, #0a0a0f) !important; }
       #loader {
         position: fixed; top: 0; left: 0; right: 0; bottom: 0;
         display: none; align-items: center; justify-content: center;

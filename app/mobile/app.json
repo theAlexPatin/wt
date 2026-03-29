@@ -23,7 +23,8 @@
       "expo-router",
       "expo-asset",
       "expo-font",
-      "expo-dev-client"
+      "expo-dev-client",
+      "expo-notifications"
     ],
     "extra": {
       "router": {},

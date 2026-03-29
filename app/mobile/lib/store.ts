@@ -5,14 +5,17 @@ import type { Device } from "./types";
 
 interface AppState {
   devices: Device[];
+  pushToken: string | null;
   addDevice: (device: Omit<Device, "id">) => void;
   removeDevice: (id: string) => void;
+  setPushToken: (token: string) => void;
 }
 
 export const useStore = create<AppState>()(
   persist(
     (set) => ({
       devices: [],
+      pushToken: null,
       addDevice: (device) =>
         set((state) => {
           const existing = state.devices.find((d) => d.host === device.host);
@@ -35,6 +38,7 @@ export const useStore = create<AppState>()(
         set((state) => ({
           devices: state.devices.filter((d) => d.id !== id),
         })),
+      setPushToken: (token) => set({ pushToken: token }),
     }),
     {
       name: "wt-companion-storage",

@@ -99,8 +99,8 @@ function ActionKey({ label, data, repeat, tabColor, sendRaw }: {
 }
 
 export default function TerminalScreen() {
-  const { device: deviceId, sessionIndex: initialIndex } =
-    useLocalSearchParams<{ device: string; sessionId: string; sessionIndex: string }>();
+  const { device: deviceId, sessionId: targetSessionId, sessionIndex: initialIndex, paneIndex: initialPaneIndex } =
+    useLocalSearchParams<{ device: string; sessionId: string; sessionIndex: string; paneIndex?: string }>();
   const navigation = useNavigation();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -117,7 +117,7 @@ export default function TerminalScreen() {
   const [initialized, setInitialized] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sessionIdx, setSessionIdx] = useState(parseInt(initialIndex ?? "0", 10));
-  const [paneIdx, setPaneIdx] = useState(0);
+  const [paneIdx, setPaneIdx] = useState(parseInt(initialPaneIndex ?? "0", 10));
   const pageScrollRef = useRef<ScrollView>(null);
   const [activePage, setActivePage] = useState(0);
   const [barWidth, setBarWidth] = useState(SCREEN_WIDTH - 16);
@@ -128,8 +128,14 @@ export default function TerminalScreen() {
 
   useEffect(() => {
     if (!device) return;
-    fetchSessions(device).then(setSessions).catch(() => {});
-  }, [device]);
+    fetchSessions(device).then((data) => {
+      setSessions(data);
+      if (targetSessionId) {
+        const idx = data.findIndex((s) => s.id === targetSessionId);
+        if (idx >= 0) setSessionIdx(idx);
+      }
+    }).catch(() => {});
+  }, [device, targetSessionId]);
 
   // Hide native header — we render our own
   useEffect(() => {
@@ -221,8 +227,11 @@ export default function TerminalScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setPaneIdx(0);
       setSessionIdx(nextIdx);
+      if (device) {
+        fetchSessions(device).then(setSessions).catch(() => {});
+      }
     },
-    [sessionIdx, sessions.length]
+    [sessionIdx, sessions.length, device]
   );
 
   const switchPane = useCallback(
@@ -441,7 +450,7 @@ export default function TerminalScreen() {
       </View>
 
       {/* Swipeable input bar: page 1 = command input, page 2 = action keys */}
-      <View style={[styles.inputContainer, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+      <View style={[styles.inputContainer, { paddingBottom: keyboardVisible ? 4 : Math.max(insets.bottom, 8) }]}>
         <View style={styles.pageDots}>
           <Pressable onPress={() => goToPage(0)} hitSlop={8}>
             <View style={[styles.pageDot, activePage === 0 && { backgroundColor: tabColor, transform: [{ scale: 1.4 }] }]} />
@@ -672,7 +681,7 @@ const styles = StyleSheet.create({
   },
   inputPage: {
     flexDirection: "row",
-    alignItems: "flex-end",
+    alignItems: "center",
     gap: 6,
   },
   actionsPage: {
@@ -711,7 +720,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.1)",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 4,
   },
   actionBubbleIcon: {
     color: "#aaa",
@@ -754,8 +762,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
-    alignSelf: "flex-end",
-    marginBottom: 2,
+    alignSelf: "center",
   },
-  sendText: { color: "#fff", fontSize: 18, fontWeight: "600" },
+  sendText: { color: "#fff", fontSize: 18, fontWeight: "600", lineHeight: 18, marginTop: -1 },
 });
