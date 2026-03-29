@@ -1,8 +1,10 @@
-import { Stack, useLocalSearchParams } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import { Pressable, Text } from "react-native";
 import { useStore } from "../../lib/store";
 
 export default function DeviceLayout() {
   const { device } = useLocalSearchParams<{ device: string }>();
+  const router = useRouter();
   const devices = useStore((s) => s.devices);
   const current = devices.find((d) => d.id === device);
 
@@ -16,13 +18,22 @@ export default function DeviceLayout() {
     >
       <Stack.Screen
         name="index"
-        options={{ title: current?.name ?? "Sessions" }}
+        options={{
+          title: current?.name ?? "Sessions",
+          headerLeft: () => (
+            <Pressable onPress={() => router.back()} style={{ marginLeft: -8 }}>
+              <Text style={{ color: "#fff", fontSize: 17 }}>{"‹ Devices"}</Text>
+            </Pressable>
+          ),
+        }}
       />
       <Stack.Screen
         name="terminal"
         options={{
-          headerShown: false,
+          title: "Terminal",
+          headerBackTitle: "",
           animation: "slide_from_bottom",
+          gestureEnabled: false,
         }}
       />
     </Stack>

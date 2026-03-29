@@ -7,9 +7,12 @@ function baseUrl(device: Device): string {
 export async function checkHealth(
   device: Device
 ): Promise<{ ok: boolean; tmux: boolean }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 3000);
   const res = await fetch(`${baseUrl(device)}/health`, {
-    signal: AbortSignal.timeout(3000),
+    signal: controller.signal,
   });
+  clearTimeout(timer);
   return res.json();
 }
 
@@ -21,10 +24,11 @@ export async function fetchSessions(device: Device): Promise<Session[]> {
 export function terminalWsUrl(
   device: Device,
   sessionId: string,
+  windowIndex: number,
   paneIndex: number,
   cols: number,
   rows: number
 ): string {
   const encoded = encodeURIComponent(sessionId);
-  return `ws://${device.host}:${device.port}/terminal/${encoded}/${paneIndex}?cols=${cols}&rows=${rows}`;
+  return `ws://${device.host}:${device.port}/terminal/${encoded}/${windowIndex}/${paneIndex}?cols=${cols}&rows=${rows}`;
 }

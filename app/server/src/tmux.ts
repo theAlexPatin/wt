@@ -1,3 +1,5 @@
+import { execFileSync } from "child_process";
+
 const SEP = "|||";
 
 export interface TmuxSession {
@@ -18,12 +20,15 @@ export interface TmuxPane {
   title: string;
 }
 
+function run(args: string[]): string {
+  return execFileSync(args[0]!, args.slice(1), { encoding: "utf-8" });
+}
+
 /** List all tmux sessions with their @wt_config_path option */
 export async function listSessions(): Promise<TmuxSession[]> {
   try {
     const fmt = `#{session_name}${SEP}#{session_windows}${SEP}#{session_attached}${SEP}#{session_created}`;
-    const proc = Bun.spawnSync(["tmux", "list-sessions", "-F", fmt]);
-    const result = proc.stdout.toString();
+    const result = run(["tmux", "list-sessions", "-F", fmt]);
 
     const sessions: TmuxSession[] = [];
 
@@ -35,14 +40,15 @@ export async function listSessions(): Promise<TmuxSession[]> {
       const attached = parts[2] ?? "0";
       const created = parts[3] ?? "0";
 
-      // Read the @wt_config_path option for this session
       let configPath: string | undefined;
       try {
-        const optProc = Bun.spawnSync(["tmux", "show-options", "-t", name, "-v", "@wt_config_path"]);
-        const optVal = optProc.stdout.toString().trim();
+        const optVal = execFileSync("tmux", ["show-options", "-t", name, "-v", "@wt_config_path"], {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+        }).trim();
         configPath = optVal || undefined;
       } catch {
-        // Session doesn't have this option set — not a wt session
+        // Session doesn't have this option set
       }
 
       sessions.push({
@@ -56,7 +62,6 @@ export async function listSessions(): Promise<TmuxSession[]> {
 
     return sessions;
   } catch {
-    // tmux not running or no sessions
     return [];
   }
 }
@@ -65,8 +70,7 @@ export async function listSessions(): Promise<TmuxSession[]> {
 export async function listPanes(sessionName: string): Promise<TmuxPane[]> {
   try {
     const fmt = `#{pane_index}${SEP}#{window_index}${SEP}#{window_name}${SEP}#{pane_active}${SEP}#{pane_width}${SEP}#{pane_height}${SEP}#{pane_title}`;
-    const proc = Bun.spawnSync(["tmux", "list-panes", "-t", sessionName, "-s", "-F", fmt]);
-    const result = proc.stdout.toString();
+    const result = run(["tmux", "list-panes", "-t", sessionName, "-s", "-F", fmt]);
 
     return result
       .trim()
@@ -92,8 +96,7 @@ export async function listPanes(sessionName: string): Promise<TmuxPane[]> {
 /** Check if tmux server is running */
 export async function isTmuxRunning(): Promise<boolean> {
   try {
-    const proc = Bun.spawnSync(["tmux", "has-session"]);
-    if (proc.exitCode !== 0) return false;
+    execFileSync("tmux", ["has-session"]);
     return true;
   } catch {
     return false;

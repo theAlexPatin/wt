@@ -6,85 +6,214 @@ import {
   Pressable,
   StyleSheet,
   KeyboardAvoidingView,
+  Keyboard,
   Platform,
-  useWindowDimensions,
+  ScrollView,
+  Dimensions,
 } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, useNavigation } from "expo-router";
 import { WebView } from "react-native-webview";
 import { BlurView } from "expo-blur";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-  runOnJS,
-} from "react-native-reanimated";
+import { useHeaderHeight } from "@react-navigation/elements";
 import { useStore } from "../../lib/store";
 import { fetchSessions, terminalWsUrl } from "../../lib/api";
+import { TERMINAL_HTML } from "../../lib/terminalHtml";
 import type { Session } from "../../lib/types";
 
-const TERMINAL_HTML = require("../../assets/terminal.html");
+// ~4 lines of monospace text at fontSize 15
+const LINE_HEIGHT = 20;
+const MAX_INPUT_LINES = 4;
+const MAX_INPUT_HEIGHT = LINE_HEIGHT * MAX_INPUT_LINES;
+const SCREEN_WIDTH = Dimensions.get("window").width;
+
+const ACTION_ROW_1 = [
+  { label: "Tab", data: "\t" },
+  { label: "^D", data: "\x04" },
+  { label: "^Z", data: "\x1a" },
+  { label: "^U", data: "\x15" },
+  { label: "^W", data: "\x17" },
+  { label: "↑", data: "\x1b[A", repeat: true },
+  { label: "⌫", data: "\x7f", repeat: true },
+];
+
+const ACTION_ROW_2 = [
+  { label: "^A", data: "\x01" },
+  { label: "^E", data: "\x05" },
+  { label: "^K", data: "\x0b" },
+  { label: "^R", data: "\x12" },
+  { label: "←", data: "\x1b[D", repeat: true },
+  { label: "↓", data: "\x1b[B", repeat: true },
+  { label: "→", data: "\x1b[C", repeat: true },
+];
+
+const REPEAT_DELAY = 400;
+const REPEAT_INTERVAL = 80;
+
+function ActionKey({ label, data, repeat, tabColor, sendRaw }: {
+  label: string; data: string; repeat?: boolean; tabColor: string;
+  sendRaw: (data: string) => void;
+}) {
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearTimers = useCallback(() => {
+    if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+  }, []);
+
+  const onPressIn = useCallback(() => {
+    if (!repeat) return;
+    sendRaw(data);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    timeoutRef.current = setTimeout(() => {
+      intervalRef.current = setInterval(() => sendRaw(data), REPEAT_INTERVAL);
+    }, REPEAT_DELAY);
+  }, [data, repeat, sendRaw]);
+
+  const onPressOut = useCallback(() => {
+    clearTimers();
+  }, [clearTimers]);
+
+  useEffect(() => clearTimers, [clearTimers]);
+
+  return (
+    <Pressable
+      style={({ pressed }) => [
+        styles.actionKey,
+        { borderColor: tabColor + "30" },
+        pressed && { backgroundColor: tabColor + "25" },
+      ]}
+      onPress={repeat ? undefined : () => {
+        sendRaw(data);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }}
+      onPressIn={repeat ? onPressIn : undefined}
+      onPressOut={repeat ? onPressOut : undefined}
+    >
+      <Text style={styles.actionKeyLabel}>{label}</Text>
+    </Pressable>
+  );
+}
 
 export default function TerminalScreen() {
   const { device: deviceId, sessionIndex: initialIndex } =
     useLocalSearchParams<{ device: string; sessionId: string; sessionIndex: string }>();
-  const router = useRouter();
+  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const { width: screenWidth } = useWindowDimensions();
+  const headerHeight = useHeaderHeight();
   const devices = useStore((s) => s.devices);
   const device = devices.find((d) => d.id === deviceId);
 
   const webViewRef = useRef<WebView>(null);
   const inputRef = useRef<TextInput>(null);
   const [inputText, setInputText] = useState("");
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [webViewReady, setWebViewReady] = useState(false);
+  const [initialized, setInitialized] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sessionIdx, setSessionIdx] = useState(parseInt(initialIndex ?? "0", 10));
   const [paneIdx, setPaneIdx] = useState(0);
+  const pageScrollRef = useRef<ScrollView>(null);
+  const [activePage, setActivePage] = useState(0);
+  const [barWidth, setBarWidth] = useState(SCREEN_WIDTH - 16);
 
   const currentSession = sessions[sessionIdx];
-  const translateX = useSharedValue(0);
+  const tabColor = currentSession?.tabColor ?? "#555";
 
-  // Load sessions
   useEffect(() => {
     if (!device) return;
     fetchSessions(device).then(setSessions).catch(() => {});
   }, [device]);
 
-  // Connect to terminal when session or pane changes
+  // Set native header with session title + vertical session counter
   useEffect(() => {
-    if (!device || !currentSession) return;
-    const wsUrl = terminalWsUrl(device, currentSession.id, paneIdx, 80, 24);
+    const count = sessions.length;
+    const num = sessionIdx + 1;
+    navigation.setOptions({
+      headerTitle: () => (
+        <View style={styles.headerTitleWrap}>
+          <View style={[styles.headerDot, { backgroundColor: tabColor }]} />
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            {currentSession?.tabTitle ?? "Terminal"}
+          </Text>
+          {count > 1 && (
+            <View style={styles.headerCounter}>
+              <Text style={[styles.headerCaret, sessionIdx === 0 && styles.headerCaretDim]}>{"▲"}</Text>
+              <Text style={styles.headerCountText}>{num}/{count}</Text>
+              <Text style={[styles.headerCaret, sessionIdx === count - 1 && styles.headerCaretDim]}>{"▼"}</Text>
+            </View>
+          )}
+        </View>
+      ),
+    });
+  }, [currentSession?.tabTitle, sessionIdx, sessions.length, tabColor, navigation]);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener("keyboardDidShow", () => setKeyboardVisible(true));
+    const hideSub = Keyboard.addListener("keyboardDidHide", () => setKeyboardVisible(false));
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, []);
+
+  // Connect to terminal when session/pane changes AND webview is ready
+  useEffect(() => {
+    if (!device || !currentSession || !webViewReady) return;
+    const pane = currentSession.panes[paneIdx];
+    if (!pane) return;
+    const wsUrl = terminalWsUrl(device, currentSession.id, pane.windowIndex, pane.index, 80, 24);
     const msg = JSON.stringify({
-      type: sessionIdx === parseInt(initialIndex ?? "0", 10) && paneIdx === 0 ? "init" : "reconnect",
+      type: initialized ? "reconnect" : "init",
       wsUrl,
       paneColor: currentSession.paneColor,
     });
     webViewRef.current?.postMessage(msg);
-  }, [device, currentSession, paneIdx]);
+    if (!initialized) setInitialized(true);
+  }, [device, currentSession, paneIdx, webViewReady]);
 
   const handleWebViewMessage = useCallback((event: { nativeEvent: { data: string } }) => {
     try {
       const msg = JSON.parse(event.nativeEvent.data);
+      if (msg.type === "ready") setWebViewReady(true);
       if (msg.type === "connected") setConnected(true);
       if (msg.type === "disconnected") setConnected(false);
+      if (msg.type === "swipe") {
+        if (msg.direction === "up") switchSession(1);
+        else if (msg.direction === "down") switchSession(-1);
+        else if (msg.direction === "left") switchPane(1);
+        else if (msg.direction === "right") switchPane(-1);
+      }
     } catch {}
+  }, [switchSession, switchPane]);
+
+  const sendRaw = useCallback((data: string) => {
+    webViewRef.current?.postMessage(JSON.stringify({ type: "input", data }));
   }, []);
 
   const sendCommand = () => {
-    if (!inputText.trim()) return;
-    const msg = JSON.stringify({ type: "input", data: inputText + "\n" });
-    webViewRef.current?.postMessage(msg);
+    sendRaw(inputText + "\r");
     setInputText("");
   };
 
-  // Gesture: swipe left/right for sessions
+  const onPageChange = useCallback((e: any) => {
+    const width = barWidth || SCREEN_WIDTH - 16;
+    const page = Math.round(e.nativeEvent.contentOffset.x / width);
+    setActivePage(page);
+  }, [barWidth]);
+
+  const goToPage = useCallback((page: number) => {
+    const width = barWidth || SCREEN_WIDTH - 16;
+    pageScrollRef.current?.scrollTo({ x: page * width, animated: true });
+    setActivePage(page);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [barWidth]);
+
   const switchSession = useCallback(
     (direction: number) => {
-      const nextIdx = sessionIdx + direction;
-      if (nextIdx < 0 || nextIdx >= sessions.length) return;
+      if (sessions.length === 0) return;
+      const nextIdx = (sessionIdx + direction + sessions.length) % sessions.length;
+      if (nextIdx === sessionIdx) return;
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setPaneIdx(0);
       setSessionIdx(nextIdx);
@@ -92,49 +221,128 @@ export default function TerminalScreen() {
     [sessionIdx, sessions.length]
   );
 
-  // Gesture: swipe up/down for panes
   const switchPane = useCallback(
     (direction: number) => {
-      if (!currentSession) return;
-      const nextPane = paneIdx + direction;
-      if (nextPane < 0 || nextPane >= currentSession.panes.length) return;
+      if (!currentSession || currentSession.panes.length === 0) return;
+      const nextPane = (paneIdx + direction + currentSession.panes.length) % currentSession.panes.length;
+      if (nextPane === paneIdx) return;
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       setPaneIdx(nextPane);
     },
     [paneIdx, currentSession]
   );
 
-  const panGesture = Gesture.Pan()
-    .activeOffsetX([-30, 30])
-    .activeOffsetY([-30, 30])
-    .onUpdate((e) => {
-      translateX.value = e.translationX * 0.3;
-    })
-    .onEnd((e) => {
-      translateX.value = withTiming(0, { duration: 200 });
-      const { translationX, translationY, velocityX, velocityY } = e;
+  // Touch-based gesture detection (no responder system — avoids trackedTouchCount warnings):
+  // - tap → toggle keyboard
+  // - 1-finger vertical swipe → switch session (or dismiss keyboard)
+  // - 1-finger horizontal swipe → switch pane
+  // - 2-finger vertical → scroll terminal history
+  const touchRef = useRef({
+    x: 0, y: 0, maxTouches: 0, triggered: false,
+    scrollAccum: 0, time: 0, lastScrollTime: 0,
+    lastMoveTime: 0, lastMoveY: 0, velocity: 0,
+    scrollPending: 0, scrollRaf: 0,
+  });
 
-      // Determine dominant axis
-      if (Math.abs(translationX) > Math.abs(translationY)) {
-        // Horizontal swipe — switch session
-        if (translationX < -60 || velocityX < -500) {
-          runOnJS(switchSession)(1);
-        } else if (translationX > 60 || velocityX > 500) {
-          runOnJS(switchSession)(-1);
-        }
-      } else {
-        // Vertical swipe — switch pane
-        if (translationY < -60 || velocityY < -500) {
-          runOnJS(switchPane)(1);
-        } else if (translationY > 60 || velocityY > 500) {
-          runOnJS(switchPane)(-1);
+  const flushScroll = useCallback(() => {
+    const t = touchRef.current;
+    t.scrollRaf = 0;
+    if (t.scrollPending !== 0) {
+      webViewRef.current?.postMessage(
+        JSON.stringify({ type: "scroll", lines: t.scrollPending })
+      );
+      t.scrollPending = 0;
+    }
+  }, []);
+
+  const onOverlayTouchStart = useCallback((e: any) => {
+    const touches = e.nativeEvent.touches;
+    const count = Array.isArray(touches) ? touches.length : 1;
+    const now = Date.now();
+    touchRef.current = {
+      x: e.nativeEvent.pageX, y: e.nativeEvent.pageY,
+      maxTouches: count, triggered: false,
+      scrollAccum: 0, time: now, lastScrollTime: touchRef.current.lastScrollTime,
+      lastMoveTime: now, lastMoveY: e.nativeEvent.pageY, velocity: 0,
+      scrollPending: 0, scrollRaf: 0,
+    };
+  }, []);
+
+  const onOverlayTouchMove = useCallback((e: any) => {
+    const t = touchRef.current;
+    const touches = e.nativeEvent.touches;
+    const count = Array.isArray(touches) ? touches.length : 1;
+    if (count > t.maxTouches) t.maxTouches = count;
+
+    if (t.maxTouches >= 2) {
+      const now = Date.now();
+      const dy = e.nativeEvent.pageY - t.y;
+      const dt = now - t.lastMoveTime;
+
+      if (dt > 0) {
+        const instantV = Math.abs(dy) / dt;
+        t.velocity = t.velocity * 0.6 + instantV * 0.4;
+      }
+
+      const multiplier = 1 + Math.min(t.velocity * 4, 4);
+      t.scrollAccum += dy * multiplier;
+      t.y = e.nativeEvent.pageY;
+      t.lastMoveTime = now;
+      t.lastMoveY = e.nativeEvent.pageY;
+      t.lastScrollTime = now;
+
+      const lines = Math.trunc(t.scrollAccum / 12);
+      if (lines !== 0) {
+        t.scrollAccum -= lines * 12;
+        t.scrollPending += lines;
+        if (!t.scrollRaf) {
+          t.scrollRaf = requestAnimationFrame(flushScroll) as unknown as number;
         }
       }
-    });
+    }
+  }, [flushScroll]);
 
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: translateX.value }],
-  }));
+  const onOverlayTouchEnd = useCallback((e: any) => {
+    const t = touchRef.current;
+    if (t.triggered) return;
+
+    const dx = e.nativeEvent.pageX - t.x;
+    const dy = e.nativeEvent.pageY - t.y;
+    const elapsed = Date.now() - t.time;
+
+    // Swipe detection (single-finger only)
+    // Vertical = switch session, Horizontal = switch pane
+    if (t.maxTouches < 2) {
+      if (Math.abs(dy) > Math.abs(dx)) {
+        if (Math.abs(dy) > 30) {
+          t.triggered = true;
+          if (dy > 0 && keyboardVisible) {
+            Keyboard.dismiss();
+          } else {
+            dy < 0 ? switchSession(1) : switchSession(-1);
+          }
+          return;
+        }
+      } else {
+        if (Math.abs(dx) > 30) {
+          t.triggered = true;
+          dx < 0 ? switchPane(1) : switchPane(-1);
+          return;
+        }
+      }
+    }
+
+    // Tap detection: small movement, short duration, not after scroll
+    if (Math.abs(dx) < 10 && Math.abs(dy) < 10 && elapsed < 400 && Date.now() - t.lastScrollTime > 300) {
+      setTimeout(() => {
+        if (keyboardVisible) {
+          Keyboard.dismiss();
+        } else {
+          inputRef.current?.focus();
+        }
+      }, 0);
+    }
+  }, [switchSession, switchPane, keyboardVisible]);
 
   if (!device) {
     return (
@@ -144,91 +352,153 @@ export default function TerminalScreen() {
     );
   }
 
-  const tabColor = currentSession?.tabColor ?? "#555";
-
   return (
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={headerHeight}
     >
-      {/* Session indicator bar */}
-      <View style={[styles.indicator, { paddingTop: insets.top }]}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
-          <Text style={styles.backText}>{"‹"}</Text>
+      {/* Indicator bar: pane dots + pane count, centered */}
+      {currentSession && currentSession.panes.length > 1 && (
+        <Pressable onPress={Keyboard.dismiss} style={styles.indicatorBar}>
+          <View style={styles.indicatorCenter}>
+            <View style={styles.paneDots}>
+              {currentSession.panes.map((_p, i) => (
+                <View
+                  key={i}
+                  style={[
+                    styles.paneDot,
+                    {
+                      backgroundColor: currentSession.tabColor ?? "#555",
+                      opacity: i === paneIdx ? 1 : 0.3,
+                    },
+                  ]}
+                />
+              ))}
+            </View>
+            <View style={styles.paneWrap}>
+              <Text style={[styles.paneChevron, paneIdx === 0 && styles.paneChevronDim]}>{"◂"}</Text>
+              <Text style={styles.paneLabel}>
+                Pane {paneIdx + 1} / {currentSession.panes.length}
+              </Text>
+              <Text style={[styles.paneChevron, paneIdx === currentSession.panes.length - 1 && styles.paneChevronDim]}>{"▸"}</Text>
+            </View>
+          </View>
         </Pressable>
-        <View style={styles.indicatorCenter}>
-          <View style={[styles.indicatorDot, { backgroundColor: tabColor }]} />
-          <Text style={styles.indicatorTitle} numberOfLines={1}>
-            {currentSession?.tabTitle ?? "..."}
-          </Text>
-          {currentSession && currentSession.panes.length > 1 && (
-            <Text style={styles.paneLabel}>
-              pane {paneIdx + 1}/{currentSession.panes.length}
-            </Text>
-          )}
-        </View>
-        <View style={styles.sessionDots}>
-          {sessions.map((s, i) => (
-            <View
-              key={s.id}
-              style={[
-                styles.sessionDot,
-                {
-                  backgroundColor: s.tabColor ?? "#555",
-                  opacity: i === sessionIdx ? 1 : 0.3,
-                },
-              ]}
-            />
-          ))}
-        </View>
+      )}
+
+      {/* Terminal WebView with full-screen swipe overlay */}
+      <View style={styles.terminalWrap}>
+        <WebView
+          ref={webViewRef}
+          source={{ html: TERMINAL_HTML }}
+          style={[
+            styles.webview,
+            { backgroundColor: currentSession?.paneColor ?? "#0a0a0f" },
+          ]}
+          onMessage={handleWebViewMessage}
+          javaScriptEnabled
+          originWhitelist={["*"]}
+          scrollEnabled={false}
+          bounces={false}
+          keyboardDisplayRequiresUserAction={false}
+          mixedContentMode="always"
+          allowsInlineMediaPlayback
+        />
+        <View
+          style={styles.swipeOverlay}
+          onTouchStart={onOverlayTouchStart}
+          onTouchMove={onOverlayTouchMove}
+          onTouchEnd={onOverlayTouchEnd}
+        />
       </View>
 
-      {/* Terminal WebView */}
-      <GestureDetector gesture={panGesture}>
-        <Animated.View style={[styles.terminalWrap, animatedStyle]}>
-          <WebView
-            ref={webViewRef}
-            source={TERMINAL_HTML}
-            style={[
-              styles.webview,
-              { backgroundColor: currentSession?.paneColor ?? "#0a0a0f" },
-            ]}
-            onMessage={handleWebViewMessage}
-            javaScriptEnabled
-            originWhitelist={["*"]}
-            scrollEnabled={false}
-            bounces={false}
-            keyboardDisplayRequiresUserAction={false}
-          />
-        </Animated.View>
-      </GestureDetector>
-
-      {/* Glass-style command input */}
-      <View style={[styles.inputWrap, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-        <BlurView intensity={40} tint="dark" style={styles.inputBlur}>
-          <View style={[styles.inputBorder, { borderColor: tabColor + "40" }]}>
-            <TextInput
-              ref={inputRef}
-              style={styles.input}
-              value={inputText}
-              onChangeText={setInputText}
-              placeholder="$ command"
-              placeholderTextColor="#555"
-              autoCapitalize="none"
-              autoCorrect={false}
-              spellCheck={false}
-              returnKeyType="send"
-              onSubmitEditing={sendCommand}
-              blurOnSubmit={false}
-            />
+      {/* Swipeable input bar: page 1 = command input, page 2 = action keys */}
+      <View style={[styles.inputContainer, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+        <View style={styles.pageDots}>
+          <Pressable onPress={() => goToPage(0)} hitSlop={8}>
+            <View style={[styles.pageDot, activePage === 0 && { backgroundColor: tabColor, transform: [{ scale: 1.4 }] }]} />
+          </Pressable>
+          <Pressable onPress={() => goToPage(1)} hitSlop={8}>
+            <View style={[styles.pageDot, activePage === 1 && { backgroundColor: tabColor, transform: [{ scale: 1.4 }] }]} />
+          </Pressable>
+        </View>
+        <ScrollView
+          ref={pageScrollRef}
+          horizontal
+          pagingEnabled
+          bounces={false}
+          showsHorizontalScrollIndicator={false}
+          keyboardShouldPersistTaps="always"
+          scrollEventThrottle={16}
+          onMomentumScrollEnd={onPageChange}
+          onLayout={(e) => setBarWidth(e.nativeEvent.layout.width)}
+          style={styles.pageScroll}
+        >
+          {/* Page 1: Command input */}
+          <View style={[styles.inputPage, { width: barWidth }]}>
             <Pressable
-              style={[styles.sendBtn, { backgroundColor: tabColor }]}
-              onPress={sendCommand}
+              style={styles.actionBubble}
+              onPress={() => sendRaw("\x1b")}
             >
-              <Text style={styles.sendText}>{"↵"}</Text>
+              <Text style={styles.actionBubbleIcon}>{"✕"}</Text>
+            </Pressable>
+            <Pressable
+              style={styles.actionBubble}
+              onPress={() => sendRaw("\x03")}
+            >
+              <Text style={styles.actionBubbleIcon}>{"■"}</Text>
+            </Pressable>
+            <Pressable style={styles.inputWrap} onPress={() => inputRef.current?.focus()}>
+              <BlurView intensity={40} tint="dark" style={styles.inputBlur}>
+                <View style={[styles.inputBorder, { borderColor: tabColor + "40" }]}>
+                  <TextInput
+                    ref={inputRef}
+                    style={styles.input}
+                    pointerEvents="none"
+                    value={inputText}
+                    onChangeText={setInputText}
+                    placeholder="$ command"
+                    placeholderTextColor="#555"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    spellCheck={false}
+                    multiline
+                    blurOnSubmit={false}
+                  />
+                  <Pressable
+                    style={[styles.sendBtn, { backgroundColor: tabColor }]}
+                    onPress={sendCommand}
+                  >
+                    <Text style={styles.sendText}>{"↵"}</Text>
+                  </Pressable>
+                </View>
+              </BlurView>
             </Pressable>
           </View>
-        </BlurView>
+
+          {/* Page 2: Quick action keys */}
+          <View style={[styles.actionsPage, { width: barWidth }]}>
+            <Pressable
+              style={styles.actionBubble}
+              onPress={() => { goToPage(0); inputRef.current?.focus(); }}
+            >
+              <Text style={styles.actionBubbleIcon}>{"⌨"}</Text>
+            </Pressable>
+            <View style={styles.actionsGrid}>
+              <View style={styles.actionsRow}>
+                {ACTION_ROW_1.map((a) => (
+                  <ActionKey key={a.label} {...a} tabColor={tabColor} sendRaw={sendRaw} />
+                ))}
+              </View>
+              <View style={styles.actionsRow}>
+                {ACTION_ROW_2.map((a) => (
+                  <ActionKey key={a.label} {...a} tabColor={tabColor} sendRaw={sendRaw} />
+                ))}
+              </View>
+            </View>
+          </View>
+        </ScrollView>
       </View>
     </KeyboardAvoidingView>
   );
@@ -239,36 +509,141 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   errorText: { color: "#ef4444", fontSize: 16 },
 
-  // Indicator bar
-  indicator: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingBottom: 6,
-    backgroundColor: "rgba(10,10,15,0.9)",
-  },
-  backBtn: { padding: 8, marginRight: 4 },
-  backText: { color: "#fff", fontSize: 28, fontWeight: "300" },
-  indicatorCenter: {
-    flex: 1,
+  // Header
+  headerTitleWrap: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
   },
-  indicatorDot: { width: 8, height: 8, borderRadius: 4 },
-  indicatorTitle: { color: "#fff", fontSize: 15, fontWeight: "600", flexShrink: 1 },
-  paneLabel: { color: "#888", fontSize: 11 },
-  sessionDots: { flexDirection: "row", gap: 4 },
-  sessionDot: { width: 6, height: 6, borderRadius: 3 },
+  headerDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  headerTitle: {
+    color: "#fff",
+    fontSize: 17,
+    fontWeight: "600",
+    flexShrink: 1,
+  },
+  headerCounter: {
+    flexDirection: "column",
+    alignItems: "center",
+    marginLeft: 2,
+  },
+  headerCaret: {
+    color: "#666",
+    fontSize: 6,
+    lineHeight: 8,
+  },
+  headerCaretDim: {
+    opacity: 0.25,
+  },
+  headerCountText: {
+    color: "#888",
+    fontSize: 10,
+    lineHeight: 12,
+  },
+
+  // Indicator bar (pane navigation)
+  indicatorBar: {
+    paddingVertical: 6,
+    backgroundColor: "rgba(10,10,15,0.95)",
+  },
+  indicatorCenter: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+  },
+  paneDots: { flexDirection: "row", gap: 4 },
+  paneDot: { width: 6, height: 6, borderRadius: 3 },
+
+  paneWrap: { flexDirection: "row", alignItems: "center", gap: 4 },
+  paneLabel: { color: "#888", fontSize: 12 },
+  paneChevron: { color: "#555", fontSize: 8 },
+  paneChevronDim: { opacity: 0.25 },
 
   // Terminal
-  terminalWrap: { flex: 1 },
+  terminalWrap: { flex: 1, position: "relative" },
   webview: { flex: 1 },
-
+  swipeOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 10,
+  },
   // Input
+  inputContainer: {
+    paddingHorizontal: 8,
+    paddingTop: 4,
+  },
+  pageDots: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 6,
+    paddingBottom: 6,
+  },
+  pageDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: "rgba(255,255,255,0.15)",
+  },
+  pageScroll: {
+    flexGrow: 0,
+  },
+  inputPage: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 6,
+  },
+  actionsPage: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  actionsGrid: {
+    flex: 1,
+    gap: 5,
+  },
+  actionsRow: {
+    flexDirection: "row",
+    gap: 5,
+  },
+  actionKey: {
+    flex: 1,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  actionKeyLabel: {
+    color: "#ccc",
+    fontSize: 13,
+    fontFamily: Platform.OS === "ios" ? "SF Mono" : "monospace",
+    fontWeight: "500",
+  },
+  actionBubble: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.1)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 4,
+  },
+  actionBubbleIcon: {
+    color: "#aaa",
+    fontSize: 18,
+  },
   inputWrap: {
-    paddingHorizontal: 12,
-    paddingTop: 8,
+    flex: 1,
   },
   inputBlur: {
     borderRadius: 22,
@@ -276,7 +651,7 @@ const styles = StyleSheet.create({
   },
   inputBorder: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-end",
     borderRadius: 22,
     borderWidth: 1,
     paddingLeft: 16,
@@ -287,8 +662,10 @@ const styles = StyleSheet.create({
     flex: 1,
     color: "#e4e4e8",
     fontSize: 15,
+    lineHeight: LINE_HEIGHT,
+    maxHeight: MAX_INPUT_HEIGHT,
     fontFamily: Platform.OS === "ios" ? "SF Mono" : "monospace",
-    paddingVertical: 10,
+    paddingVertical: 8,
   },
   sendBtn: {
     width: 36,
@@ -296,6 +673,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
+    marginBottom: 2,
   },
   sendText: { color: "#fff", fontSize: 18, fontWeight: "600" },
 });

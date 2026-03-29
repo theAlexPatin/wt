@@ -17,7 +17,9 @@
       "bundleIdentifier": "com.wt.companion"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-asset",
+      "expo-font"
     ]
   }
 }

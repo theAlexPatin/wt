@@ -69,20 +69,16 @@
         term.loadAddon(webLinksAddon);
         term.open(document.getElementById("terminal"));
 
-        // Fit after a short delay to ensure DOM is ready
         setTimeout(() => fitAddon.fit(), 50);
 
-        // Handle user input → send to WebSocket
         term.onData((data) => {
           if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(data);
           }
         });
 
-        // Connect WebSocket
         connect(config.wsUrl);
 
-        // Handle resize
         const resizeObserver = new ResizeObserver(() => {
           if (fitAddon) {
             fitAddon.fit();
@@ -146,7 +142,6 @@
         }
       }
 
-      // Listen for messages from React Native
       window.addEventListener("message", (event) => {
         try {
           const msg = JSON.parse(event.data);
@@ -169,7 +164,6 @@
         } catch {}
       });
 
-      // Also handle document-level for iOS WebView
       document.addEventListener("message", (event) => {
         try {
           const msg = JSON.parse(event.data);

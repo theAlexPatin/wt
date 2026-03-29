@@ -1,13 +1,12 @@
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { StyleSheet } from "react-native";
+import { View, StyleSheet } from "react-native";
 
 const BG = "#0a0a0f";
 
 export default function RootLayout() {
   return (
-    <GestureHandlerRootView style={styles.root}>
+    <View style={styles.root}>
       <StatusBar style="light" />
       <Stack
         screenOptions={{
@@ -17,8 +16,10 @@ export default function RootLayout() {
           contentStyle: { backgroundColor: BG },
           animation: "slide_from_right",
         }}
-      />
-    </GestureHandlerRootView>
+      >
+        <Stack.Screen name="[device]" options={{ headerShown: false }} />
+      </Stack>
+    </View>
   );
 }
 

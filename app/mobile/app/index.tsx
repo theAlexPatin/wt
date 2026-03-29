@@ -1,27 +1,110 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useRef } from "react";
 import {
   View,
   Text,
   FlatList,
-  TextInput,
   Pressable,
-  Modal,
   StyleSheet,
-  Alert,
+  Animated,
+  PanResponder,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { CameraView, useCameraPermissions } from "expo-camera";
+import { useRouter, useFocusEffect } from "expo-router";
 import { useStore } from "../lib/store";
 import { checkHealth } from "../lib/api";
 import type { Device } from "../lib/types";
 
+const ACTION_WIDTH = 72;
+
+function SwipeableCard({
+  device,
+  online,
+  onPress,
+  onDelete,
+}: {
+  device: Device;
+  online: boolean;
+  onPress: () => void;
+  onDelete: () => void;
+}) {
+  const translateX = useRef(new Animated.Value(0)).current;
+  const isOpen = useRef(false);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, g) =>
+        Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy),
+      onPanResponderMove: (_, g) => {
+        const base = isOpen.current ? -ACTION_WIDTH : 0;
+        const next = Math.min(0, Math.max(-ACTION_WIDTH, base + g.dx));
+        translateX.setValue(next);
+      },
+      onPanResponderRelease: (_, g) => {
+        const base = isOpen.current ? -ACTION_WIDTH : 0;
+        const final = base + g.dx;
+        const shouldOpen = final < -ACTION_WIDTH / 2 || g.vx < -0.3;
+        const target = shouldOpen ? -ACTION_WIDTH : 0;
+        isOpen.current = shouldOpen;
+        Animated.spring(translateX, {
+          toValue: target,
+          useNativeDriver: true,
+          bounciness: 0,
+          speed: 20,
+        }).start();
+      },
+    })
+  ).current;
+
+  return (
+    <View style={styles.swipeContainer}>
+      <View style={styles.actionsRow}>
+        <Pressable
+          style={styles.deleteAction}
+          onPress={() => {
+            Animated.spring(translateX, {
+              toValue: 0,
+              useNativeDriver: true,
+              speed: 20,
+              bounciness: 0,
+            }).start();
+            isOpen.current = false;
+            onDelete();
+          }}
+        >
+          <Text style={styles.deleteActionText}>Delete</Text>
+        </Pressable>
+      </View>
+      <Animated.View
+        style={[styles.card, { transform: [{ translateX }] }]}
+        {...panResponder.panHandlers}
+      >
+        <Pressable onPress={onPress}>
+          <View style={styles.cardHeader}>
+            <View
+              style={[
+                styles.dot,
+                online ? styles.dotOnline : styles.dotOffline,
+              ]}
+            />
+            <Text
+              style={[styles.cardTitle, !online && styles.cardTitleOffline]}
+            >
+              {device.name}
+            </Text>
+          </View>
+        </Pressable>
+      </Animated.View>
+    </View>
+  );
+}
+
 export default function DeviceListScreen() {
   const router = useRouter();
   const { devices, addDevice, removeDevice } = useStore();
-  const [showAdd, setShowAdd] = useState(false);
-  const [name, setName] = useState("");
-  const [host, setHost] = useState("");
-  const [port, setPort] = useState("7890");
   const [healthMap, setHealthMap] = useState<Record<string, boolean>>({});
+  const [scanning, setScanning] = useState(false);
+  const [permission, requestPermission] = useCameraPermissions();
 
   const refreshHealth = useCallback(async () => {
     const results: Record<string, boolean> = {};
@@ -29,7 +112,7 @@ export default function DeviceListScreen() {
       devices.map(async (d) => {
         try {
           const h = await checkHealth(d);
-          results[d.id] = h.ok && h.tmux;
+          results[d.id] = h.ok;
         } catch {
           results[d.id] = false;
         }
@@ -38,46 +121,62 @@ export default function DeviceListScreen() {
     setHealthMap(results);
   }, [devices]);
 
-  useEffect(() => {
-    refreshHealth();
-  }, [refreshHealth]);
+  useFocusEffect(
+    useCallback(() => {
+      refreshHealth();
+    }, [refreshHealth])
+  );
 
-  const handleAdd = () => {
-    if (!name.trim() || !host.trim()) return;
-    addDevice({ name: name.trim(), host: host.trim(), port: parseInt(port, 10) || 7890 });
-    setName("");
-    setHost("");
-    setPort("7890");
-    setShowAdd(false);
+  const handleScan = async () => {
+    if (!permission?.granted) {
+      const result = await requestPermission();
+      if (!result.granted) return;
+    }
+    setScanning(true);
   };
 
-  const handleDelete = (device: Device) => {
-    Alert.alert("Remove Device", `Remove "${device.name}"?`, [
-      { text: "Cancel", style: "cancel" },
-      { text: "Remove", style: "destructive", onPress: () => removeDevice(device.id) },
-    ]);
+  const handleBarcode = ({ data }: { data: string }) => {
+    setScanning(false);
+    try {
+      const parsed = JSON.parse(data);
+      if (parsed.host) {
+        addDevice({
+          name: parsed.name || parsed.host,
+          host: parsed.host,
+          port: parsed.port || 7890,
+        });
+      }
+    } catch {
+      // Not valid JSON, ignore
+    }
   };
 
-  const renderDevice = ({ item }: { item: Device }) => {
-    const online = healthMap[item.id];
+  if (scanning) {
     return (
-      <Pressable
-        style={styles.card}
-        onPress={() => router.push(`/${item.id}`)}
-        onLongPress={() => handleDelete(item)}
-      >
-        <View style={styles.cardHeader}>
-          <View
-            style={[styles.dot, { backgroundColor: online ? "#34d399" : "#ef4444" }]}
-          />
-          <Text style={styles.cardTitle}>{item.name}</Text>
-        </View>
-        <Text style={styles.cardSub}>
-          {item.host}:{item.port}
-        </Text>
-      </Pressable>
+      <View style={styles.container}>
+        <CameraView
+          style={styles.camera}
+          barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+          onBarcodeScanned={handleBarcode}
+        />
+        <Pressable
+          style={styles.cancelScan}
+          onPress={() => setScanning(false)}
+        >
+          <Text style={styles.cancelScanText}>Cancel</Text>
+        </Pressable>
+      </View>
     );
-  };
+  }
+
+  const renderDevice = ({ item }: { item: Device }) => (
+    <SwipeableCard
+      device={item}
+      online={healthMap[item.id]}
+      onPress={() => router.push(`/${item.id}`)}
+      onDelete={() => removeDevice(item.id)}
+    />
+  );
 
   return (
     <View style={styles.container}>
@@ -90,61 +189,15 @@ export default function DeviceListScreen() {
           <View style={styles.empty}>
             <Text style={styles.emptyText}>No devices yet</Text>
             <Text style={styles.emptyHint}>
-              Add a device running wt-server
+              Run <Text style={styles.code}>wt connect</Text> on a machine
+              and scan the QR code
             </Text>
           </View>
         }
       />
-
-      <Pressable style={styles.addButton} onPress={() => setShowAdd(true)}>
-        <Text style={styles.addButtonText}>+ Add Device</Text>
+      <Pressable style={styles.addButton} onPress={handleScan}>
+        <Text style={styles.addButtonText}>Scan QR Code</Text>
       </Pressable>
-
-      <Modal visible={showAdd} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modal}>
-            <Text style={styles.modalTitle}>Add Device</Text>
-
-            <TextInput
-              style={styles.input}
-              placeholder="Name (e.g. My Mac)"
-              placeholderTextColor="#666"
-              value={name}
-              onChangeText={setName}
-              autoFocus
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Host (e.g. 192.168.1.10)"
-              placeholderTextColor="#666"
-              value={host}
-              onChangeText={setHost}
-              autoCapitalize="none"
-              keyboardType="url"
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Port (default: 7890)"
-              placeholderTextColor="#666"
-              value={port}
-              onChangeText={setPort}
-              keyboardType="number-pad"
-            />
-
-            <View style={styles.modalActions}>
-              <Pressable
-                style={styles.cancelBtn}
-                onPress={() => setShowAdd(false)}
-              >
-                <Text style={styles.cancelText}>Cancel</Text>
-              </Pressable>
-              <Pressable style={styles.saveBtn} onPress={handleAdd}>
-                <Text style={styles.saveText}>Add</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -152,21 +205,69 @@ export default function DeviceListScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   list: { padding: 16, paddingBottom: 80 },
+
+  // Swipeable
+  swipeContainer: {
+    marginBottom: 12,
+    borderRadius: 14,
+    overflow: "hidden",
+  },
+  actionsRow: {
+    position: "absolute",
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: ACTION_WIDTH,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  deleteAction: {
+    flex: 1,
+    height: "100%",
+    backgroundColor: "#ef4444",
+    justifyContent: "center",
+    alignItems: "center",
+    borderTopRightRadius: 14,
+    borderBottomRightRadius: 14,
+  },
+  deleteActionText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+
+  // Card
   card: {
     backgroundColor: "#141420",
     borderRadius: 14,
     padding: 16,
-    marginBottom: 12,
     borderWidth: 1,
     borderColor: "#1e1e2e",
   },
   cardHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
   dot: { width: 8, height: 8, borderRadius: 4 },
+  dotOnline: { backgroundColor: "#34d399" },
+  dotOffline: {
+    backgroundColor: "transparent",
+    borderWidth: 1.5,
+    borderColor: "#555",
+  },
   cardTitle: { color: "#fff", fontSize: 17, fontWeight: "600" },
-  cardSub: { color: "#888", fontSize: 13, marginTop: 4, marginLeft: 18 },
+  cardTitleOffline: { color: "#666" },
+
+  // Empty
   empty: { alignItems: "center", marginTop: 120 },
   emptyText: { color: "#555", fontSize: 18, fontWeight: "600" },
-  emptyHint: { color: "#444", fontSize: 14, marginTop: 8 },
+  emptyHint: {
+    color: "#444",
+    fontSize: 14,
+    marginTop: 8,
+    textAlign: "center",
+  },
+  code: { color: "#888", fontFamily: "monospace" },
+
+  // Add button
   addButton: {
     position: "absolute",
     bottom: 40,
@@ -178,51 +279,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   addButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  modalOverlay: {
-    flex: 1,
+
+  // Camera
+  camera: { flex: 1 },
+  cancelScan: {
+    position: "absolute",
+    bottom: 60,
+    alignSelf: "center",
     backgroundColor: "rgba(0,0,0,0.7)",
-    justifyContent: "flex-end",
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 20,
   },
-  modal: {
-    backgroundColor: "#141420",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 24,
-    paddingBottom: 40,
-  },
-  modalTitle: {
-    color: "#fff",
-    fontSize: 20,
-    fontWeight: "700",
-    marginBottom: 20,
-  },
-  input: {
-    backgroundColor: "#1e1e2e",
-    borderRadius: 10,
-    padding: 14,
-    color: "#fff",
-    fontSize: 16,
-    marginBottom: 12,
-  },
-  modalActions: {
-    flexDirection: "row",
-    gap: 12,
-    marginTop: 8,
-  },
-  cancelBtn: {
-    flex: 1,
-    padding: 14,
-    borderRadius: 10,
-    backgroundColor: "#1e1e2e",
-    alignItems: "center",
-  },
-  cancelText: { color: "#888", fontSize: 16, fontWeight: "600" },
-  saveBtn: {
-    flex: 1,
-    padding: 14,
-    borderRadius: 10,
-    backgroundColor: "#2563eb",
-    alignItems: "center",
-  },
-  saveText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  cancelScanText: { color: "#fff", fontSize: 16, fontWeight: "600" },
 });
