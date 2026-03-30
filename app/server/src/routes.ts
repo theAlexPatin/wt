@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { Expo, type ExpoPushMessage, type ExpoPushTicket } from "expo-server-sdk";
-import { listSessions, listPanes, isTmuxRunning, createSession, killSession, renameSession, splitPane, killPane, capturePane } from "./tmux";
+import { listSessions, listPanes, isTmuxRunning, createSession, killSession, renameSession, splitPane, killPane, capturePane, getSessionOption } from "./tmux";
 import { readWtConfig, parseConfigPath } from "./worktrees";
 import { activeTerminals } from "./state";
 
@@ -43,6 +43,14 @@ app.get("/sessions", async (c) => {
           repo = parsed.repo;
           worktree = parsed.worktree;
         }
+      }
+
+      // Fall back to direct tmux session options (set by `theme` command)
+      if (!config.tabColor) {
+        config.tabColor = getSessionOption(session.name, "@wt_tab_color");
+      }
+      if (!config.paneColor) {
+        config.paneColor = getSessionOption(session.name, "@wt_pane_color");
       }
 
       return {

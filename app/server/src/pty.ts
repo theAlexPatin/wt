@@ -4,6 +4,8 @@ import { execFileSync } from "child_process";
 export interface TerminalSession {
   ptyProcess: pty.IPty;
   paneTarget: string;
+  /** Pane target on the original session (not the temp grouped session) */
+  originalPaneTarget: string;
   tmuxPath: string;
   dispose: () => void;
   /** Timer for exiting copy-mode after scroll idle */
@@ -58,6 +60,7 @@ export function createPaneSession(
   const tmuxPath = execFileSync("which", ["tmux"], { encoding: "utf-8" }).trim() || "tmux";
   const tempName = `wt-mobile-${++sessionCounter}`;
   const paneTarget = `${tempName}:${windowIndex}.${paneIndex}`;
+  const originalPaneTarget = `${tmuxSession}:${windowIndex}.${paneIndex}`;
 
   // Create a grouped session (shares windows with original, own view state)
   tmux(tmuxPath, ["new-session", "-d", "-s", tempName, "-t", tmuxSession]);
@@ -115,11 +118,25 @@ export function createPaneSession(
   return {
     ptyProcess,
     paneTarget,
+    originalPaneTarget,
     tmuxPath,
     dispose() {
       onData.dispose();
       onExit.dispose();
       try { ptyProcess.kill(); } catch {}
+
+      // Clear any pending scroll-exit timer so it doesn't fire after
+      // the temp session is dead (which would leave copy-mode stuck)
+      if (this.scrollExitTimer) {
+        clearTimeout(this.scrollExitTimer);
+        this.scrollExitTimer = undefined;
+      }
+
+      // Cancel copy-mode on the original session's pane — the temp session
+      // is about to be killed, so targeting it would silently fail
+      try {
+        tmux(tmuxPath, ["send-keys", "-t", originalPaneTarget, "-X", "cancel"]);
+      } catch {}
 
       // Unzoom the pane before killing — zoom is per-window (shared),
       // so we must restore it or the original session's layout breaks

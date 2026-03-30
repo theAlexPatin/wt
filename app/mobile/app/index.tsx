@@ -121,7 +121,8 @@ export default function DeviceListScreen() {
         try {
           const h = await checkHealth(d);
           results[d.id] = h.ok;
-        } catch {
+        } catch (e) {
+          console.warn(`Health check failed for ${d.host}:${d.port}:`, e);
           results[d.id] = false;
         }
       })

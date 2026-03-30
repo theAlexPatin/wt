@@ -2,24 +2,30 @@ import { useEffect, useRef } from "react";
 import { Stack, router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { View, Image, Text, StyleSheet, AppState } from "react-native";
-import * as Notifications from "expo-notifications";
 import { useStore } from "../lib/store";
 import { registerPushToken } from "../lib/api";
 
 const BG = "#0a0a0f";
 const EAS_PROJECT_ID = "b6d031cb-f40d-48cf-8bad-dc2645b6bfbb";
 
-// Show notifications even when app is foregrounded
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+let Notifications: typeof import("expo-notifications") | null = null;
+try {
+  Notifications = require("expo-notifications");
+} catch {}
+
+if (Notifications) {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+    }),
+  });
+}
 
 async function getPushToken(): Promise<string | null> {
+  if (!Notifications) return null;
   const { status: existing } = await Notifications.getPermissionsAsync();
   let finalStatus = existing;
   if (existing !== "granted") {
@@ -40,9 +46,7 @@ async function registerWithAllDevices(token: string) {
   );
 }
 
-function handleNotificationResponse(
-  response: Notifications.NotificationResponse
-) {
+function handleNotificationResponse(response: any) {
   const data = response.notification.request.content.data;
   if (data?.sessionId && data?.deviceId) {
     router.push({
@@ -59,10 +63,11 @@ function handleNotificationResponse(
 
 export default function RootLayout() {
   const setPushToken = useStore((s) => s.setPushToken);
-  const responseListener = useRef<Notifications.EventSubscription>(null);
+  const responseListener = useRef<any>(null);
 
   useEffect(() => {
-    // Get push token and register with servers
+    if (!Notifications) return;
+
     getPushToken().then((token) => {
       if (token) {
         setPushToken(token);
@@ -70,18 +75,15 @@ export default function RootLayout() {
       }
     });
 
-    // Handle notification taps while app is running
     responseListener.current =
       Notifications.addNotificationResponseReceivedListener(
         handleNotificationResponse
       );
 
-    // Handle cold-start notification tap
     Notifications.getLastNotificationResponseAsync().then((response) => {
       if (response) handleNotificationResponse(response);
     });
 
-    // Re-register tokens when app returns to foreground
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") {
         const token = useStore.getState().pushToken;

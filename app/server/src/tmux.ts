@@ -46,6 +46,7 @@ export async function listSessions(): Promise<TmuxSession[]> {
       if (!line) continue;
       const parts = line.split(SEP);
       const name = parts[0] ?? "";
+      if (name.startsWith("wt-mobile-")) continue;
       const windows = parts[1] ?? "0";
       const attached = parts[2] ?? "0";
       const created = parts[3] ?? "0";
@@ -73,6 +74,18 @@ export async function listSessions(): Promise<TmuxSession[]> {
     return sessions;
   } catch {
     return [];
+  }
+}
+
+/** Read a tmux session user option (e.g. @wt_tab_color) */
+export function getSessionOption(sessionName: string, option: string): string | undefined {
+  try {
+    return execFileSync(TMUX, ["show-options", "-t", sessionName, "-v", option], {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim() || undefined;
+  } catch {
+    return undefined;
   }
 }
 

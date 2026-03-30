@@ -9,6 +9,16 @@
         "buildConfiguration": "Debug"
       }
     },
+    "development-sim": {
+      "distribution": "internal",
+      "ios": {
+        "buildConfiguration": "Debug",
+        "simulator": true
+      }
+    },
+    "preview": {
+      "distribution": "internal"
+    },
     "production": {
       "distribution": "store"
     }
