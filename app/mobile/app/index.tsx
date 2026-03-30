@@ -36,6 +36,7 @@ function SwipeableCard({
       onStartShouldSetPanResponder: () => false,
       onMoveShouldSetPanResponder: (_, g) =>
         Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy),
+      onPanResponderTerminationRequest: () => false,
       onPanResponderMove: (_, g) => {
         const base = isOpen.current ? -ACTION_WIDTH : 0;
         const next = Math.min(0, Math.max(-ACTION_WIDTH, base + g.dx));

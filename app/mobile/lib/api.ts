@@ -8,7 +8,7 @@ export async function checkHealth(
   device: Device
 ): Promise<{ ok: boolean; tmux: boolean }> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 10000);
+  const timer = setTimeout(() => controller.abort(), 30000);
   const res = await fetch(`${baseUrl(device)}/health`, {
     signal: controller.signal,
   });
