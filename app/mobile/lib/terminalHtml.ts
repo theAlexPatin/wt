@@ -19,7 +19,7 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
       .spinner {
         width: 20px; height: 20px;
         border: 2px solid rgba(255,255,255,0.08);
-        border-top-color: rgba(255,255,255,0.4);
+        border-top-color: #D4900A;
         border-radius: 50%;
         animation: spin 0.8s linear infinite;
       }
@@ -31,7 +31,7 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
       }
       .progress-fill {
         height: 100%; width: 0%;
-        background: rgba(255,255,255,0.4);
+        background: #D4900A;
         border-radius: 2px;
         transition: width 0.15s ease-out;
       }

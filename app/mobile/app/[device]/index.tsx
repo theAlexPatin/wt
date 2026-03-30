@@ -445,7 +445,7 @@ export default function SessionListScreen() {
                 autoFocus
                 autoCapitalize="none"
                 autoCorrect={false}
-                selectionColor="#888"
+                selectionColor="#D4900A"
                 placeholderTextColor="#555"
                 placeholder="Session name"
                 onSubmitEditing={handleRenameSubmit}
@@ -587,10 +587,10 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: "#2563eb",
+    backgroundColor: "#D4900A",
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#2563eb",
+    shadowColor: "#D4900A",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4,
     shadowRadius: 12,
@@ -651,7 +651,7 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 14,
     borderRadius: 10,
-    backgroundColor: "#2563eb",
+    backgroundColor: "#D4900A",
     alignItems: "center",
   },
   modalSaveText: { color: "#fff", fontSize: 15, fontWeight: "600" },
