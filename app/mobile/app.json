@@ -12,22 +12,21 @@
       "resizeMode": "contain",
       "backgroundColor": "#0a0a0f"
     },
-    "newArchEnabled": false,
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.a-patin96.wit2",
+      "bundleIdentifier": "com.owner.wit-companion",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
         }
-      },
-      "entitlements": {}
+      }
     },
     "plugins": [
       "expo-router",
       "expo-asset",
-      "expo-font"
+      "expo-font",
+      "expo-notifications"
     ],
     "extra": {
       "router": {},

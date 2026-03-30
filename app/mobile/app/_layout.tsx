@@ -2,30 +2,23 @@ import { useEffect, useRef } from "react";
 import { Stack, router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { View, Image, Text, StyleSheet, AppState } from "react-native";
+import * as Notifications from "expo-notifications";
 import { useStore } from "../lib/store";
 import { registerPushToken } from "../lib/api";
 
 const BG = "#0a0a0f";
 const EAS_PROJECT_ID = "b6d031cb-f40d-48cf-8bad-dc2645b6bfbb";
 
-let Notifications: typeof import("expo-notifications") | null = null;
-try {
-  Notifications = require("expo-notifications");
-} catch {}
-
-if (Notifications) {
-  Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowBanner: true,
-      shouldShowList: true,
-      shouldPlaySound: true,
-      shouldSetBadge: false,
-    }),
-  });
-}
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
 
 async function getPushToken(): Promise<string | null> {
-  if (!Notifications) return null;
   const { status: existing } = await Notifications.getPermissionsAsync();
   let finalStatus = existing;
   if (existing !== "granted") {
@@ -66,8 +59,6 @@ export default function RootLayout() {
   const responseListener = useRef<any>(null);
 
   useEffect(() => {
-    if (!Notifications) return;
-
     getPushToken().then((token) => {
       if (token) {
         setPushToken(token);
