@@ -124,5 +124,5 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: BG },
   headerTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   headerIcon: { width: 24, height: 24 },
-  headerTitleText: { color: "#fff", fontSize: 17, fontWeight: "600" },
+  headerTitleText: { color: "#D4900A", fontSize: 17, fontWeight: "600" },
 });
