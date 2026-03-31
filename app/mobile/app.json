@@ -34,7 +34,8 @@
             "newArchEnabled": false
           }
         }
-      ]
+      ],
+      "./plugins/withFollyNoCoroutines"
     ],
     "extra": {
       "router": {},
