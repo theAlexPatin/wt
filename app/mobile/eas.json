@@ -18,6 +18,9 @@
     },
     "preview": {
       "distribution": "internal",
+      "ios": {
+        "image": "macos-sequoia-15.4-xcode-16.3"
+      },
       "env": {
         "FOLLY_CFG_NO_COROUTINES": "1"
       }
