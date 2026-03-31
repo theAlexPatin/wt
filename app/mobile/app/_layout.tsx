@@ -7,29 +7,37 @@ import { useStore } from "../lib/store";
 import { registerPushToken } from "../lib/api";
 
 const BG = "#0a0a0f";
-const EAS_PROJECT_ID = "b6d031cb-f40d-48cf-8bad-dc2645b6bfbb";
+const EAS_PROJECT_ID = "a671143b-7d4c-4f99-ab53-b24634e0c7e1";
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+try {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+    }),
+  });
+} catch {
+  // Native module may not be ready yet
+}
 
 async function getPushToken(): Promise<string | null> {
-  const { status: existing } = await Notifications.getPermissionsAsync();
-  let finalStatus = existing;
-  if (existing !== "granted") {
-    const { status } = await Notifications.requestPermissionsAsync();
-    finalStatus = status;
+  try {
+    const { status: existing } = await Notifications.getPermissionsAsync();
+    let finalStatus = existing;
+    if (existing !== "granted") {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+    if (finalStatus !== "granted") return null;
+    const token = await Notifications.getExpoPushTokenAsync({
+      projectId: EAS_PROJECT_ID,
+    });
+    return token.data;
+  } catch {
+    return null;
   }
-  if (finalStatus !== "granted") return null;
-  const token = await Notifications.getExpoPushTokenAsync({
-    projectId: EAS_PROJECT_ID,
-  });
-  return token.data;
 }
 
 async function registerWithAllDevices(token: string) {
