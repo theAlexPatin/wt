@@ -26,7 +26,15 @@
       "expo-router",
       "expo-asset",
       "expo-font",
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "newArchEnabled": false
+          }
+        }
+      ]
     ],
     "extra": {
       "router": {},
