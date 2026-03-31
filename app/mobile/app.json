@@ -27,6 +27,7 @@
       "expo-asset",
       "expo-font",
       "expo-notifications",
+      "expo-camera",
       [
         "expo-build-properties",
         {
@@ -40,9 +41,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "b6d031cb-f40d-48cf-8bad-dc2645b6bfbb"
+        "projectId": "a671143b-7d4c-4f99-ab53-b24634e0c7e1"
       }
     },
-    "owner": "thealexpatin"
+    "owner": "owner-com"
   }
 }
