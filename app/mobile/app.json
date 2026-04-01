@@ -33,12 +33,11 @@
         "expo-build-properties",
         {
           "ios": {
-            "newArchEnabled": false
+            "newArchEnabled": true
           }
         }
       ],
-      "./plugins/withFollyNoCoroutines",
-      "./plugins/withNilSafeFabricProvider"
+      "./plugins/withFollyNoCoroutines"
     ],
     "extra": {
       "router": {},
