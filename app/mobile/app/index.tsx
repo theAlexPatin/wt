@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, lazy, Suspense } from "react";
 import {
   View,
   Text,
@@ -8,7 +8,6 @@ import {
   Animated,
   PanResponder,
 } from "react-native";
-import { CameraView, useCameraPermissions } from "expo-camera";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useStore } from "../lib/store";
 import { checkHealth } from "../lib/api";
@@ -113,7 +112,7 @@ export default function DeviceListScreen() {
   const { devices, addDevice, removeDevice } = useStore();
   const [healthMap, setHealthMap] = useState<Record<string, boolean>>({});
   const [scanning, setScanning] = useState(false);
-  const [permission, requestPermission] = useCameraPermissions();
+  const [CameraModule, setCameraModule] = useState<any>(null);
 
   const refreshHealth = useCallback(async () => {
     const results: Record<string, boolean> = {};
@@ -138,11 +137,13 @@ export default function DeviceListScreen() {
   );
 
   const handleScan = async () => {
-    if (!permission?.granted) {
-      const result = await requestPermission();
-      if (!result.granted) return;
-    }
-    setScanning(true);
+    try {
+      const cam = await import("expo-camera");
+      const { status } = await cam.Camera.requestCameraPermissionsAsync();
+      if (status !== "granted") return;
+      setCameraModule(cam);
+      setScanning(true);
+    } catch {}
   };
 
   const handleBarcode = ({ data }: { data: string }) => {
@@ -161,7 +162,8 @@ export default function DeviceListScreen() {
     }
   };
 
-  if (scanning) {
+  if (scanning && CameraModule) {
+    const { CameraView } = CameraModule;
     return (
       <View style={styles.container}>
         <CameraView
