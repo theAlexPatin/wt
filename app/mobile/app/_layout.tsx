@@ -1,140 +1,90 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useRef } from "react";
 import { Stack, router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { View, Image, Text, StyleSheet, AppState, ScrollView } from "react-native";
+import { View, Image, Text, StyleSheet, AppState } from "react-native";
+import * as Notifications from "expo-notifications";
 import { useStore } from "../lib/store";
 import { registerPushToken } from "../lib/api";
 
 const BG = "#0a0a0f";
 const EAS_PROJECT_ID = "a671143b-7d4c-4f99-ab53-b24634e0c7e1";
 
-// Global error handler to catch native crashes that bubble to JS
-const errors: string[] = [];
-const origHandler = ErrorUtils.getGlobalHandler();
-ErrorUtils.setGlobalHandler((error: any, isFatal?: boolean) => {
-  errors.push(`${isFatal ? "FATAL: " : ""}${error?.message || error}\n${error?.stack || ""}`);
-  if (origHandler) origHandler(error, isFatal);
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
 });
 
-class ErrorBoundary extends React.Component<
-  { children: React.ReactNode },
-  { error: string | null }
-> {
-  state = { error: null as string | null };
-  static getDerivedStateFromError(error: Error) {
-    return { error: `${error.message}\n${error.stack}` };
+async function getPushToken(): Promise<string | null> {
+  const { status: existing } = await Notifications.getPermissionsAsync();
+  let finalStatus = existing;
+  if (existing !== "granted") {
+    const { status } = await Notifications.requestPermissionsAsync();
+    finalStatus = status;
   }
-  render() {
-    if (this.state.error || errors.length > 0) {
-      return (
-        <View style={{ flex: 1, backgroundColor: "#0a0a0f", padding: 20, paddingTop: 80 }}>
-          <Text style={{ color: "#ef4444", fontSize: 18, fontWeight: "700", marginBottom: 12 }}>
-            Crash Report
-          </Text>
-          <ScrollView>
-            <Text selectable style={{ color: "#ccc", fontSize: 12, fontFamily: "monospace" }}>
-              {this.state.error || ""}
-              {errors.join("\n---\n")}
-            </Text>
-          </ScrollView>
-        </View>
-      );
-    }
-    return this.props.children;
-  }
-}
-
-async function setupNotifications() {
-  try {
-    const Notifications = await import("expo-notifications");
-
-    Notifications.setNotificationHandler({
-      handleNotification: async () => ({
-        shouldShowBanner: true,
-        shouldShowList: true,
-        shouldPlaySound: true,
-        shouldSetBadge: false,
-      }),
-    });
-
-    const { status: existing } =
-      await Notifications.getPermissionsAsync();
-    let finalStatus = existing;
-    if (existing !== "granted") {
-      const { status } = await Notifications.requestPermissionsAsync();
-      finalStatus = status;
-    }
-    if (finalStatus !== "granted") return null;
-
-    const tokenResult = await Notifications.getExpoPushTokenAsync({
-      projectId: EAS_PROJECT_ID,
-    });
-    return { Notifications, token: tokenResult.data };
-  } catch {
-    return null;
-  }
-}
-
-function handleNotificationResponse(response: any) {
-  try {
-    const data = response.notification.request.content.data;
-    if (data?.sessionId && data?.deviceId) {
-      router.push({
-        pathname: "/[device]/terminal",
-        params: {
-          device: data.deviceId as string,
-          sessionId: data.sessionId as string,
-          sessionIndex: "0",
-          paneIndex: String(data.paneIndex ?? 0),
-        },
-      });
-    }
-  } catch {}
+  if (finalStatus !== "granted") return null;
+  const token = await Notifications.getExpoPushTokenAsync({
+    projectId: EAS_PROJECT_ID,
+  });
+  return token.data;
 }
 
 async function registerWithAllDevices(token: string) {
-  try {
-    const devices = useStore.getState().devices;
-    await Promise.allSettled(
-      devices.map((device) => registerPushToken(device, token, device.id))
-    );
-  } catch {}
+  const devices = useStore.getState().devices;
+  await Promise.allSettled(
+    devices.map((device) => registerPushToken(device, token, device.id))
+  );
 }
 
-function RootLayoutInner() {
+function handleNotificationResponse(response: any) {
+  const data = response.notification.request.content.data;
+  if (data?.sessionId && data?.deviceId) {
+    router.push({
+      pathname: "/[device]/terminal",
+      params: {
+        device: data.deviceId as string,
+        sessionId: data.sessionId as string,
+        sessionIndex: "0",
+        paneIndex: String(data.paneIndex ?? 0),
+      },
+    });
+  }
+}
+
+export default function RootLayout() {
   const setPushToken = useStore((s) => s.setPushToken);
+  const responseListener = useRef<any>(null);
 
   useEffect(() => {
-    let responseListener: any = null;
-    let appStateSubscription: any = null;
+    getPushToken().then((token) => {
+      if (token) {
+        setPushToken(token);
+        registerWithAllDevices(token);
+      }
+    });
 
-    setupNotifications().then((result) => {
-      if (!result) return;
-      const { Notifications, token } = result;
+    responseListener.current =
+      Notifications.addNotificationResponseReceivedListener(
+        handleNotificationResponse
+      );
 
-      setPushToken(token);
-      registerWithAllDevices(token);
+    Notifications.getLastNotificationResponseAsync().then((response) => {
+      if (response) handleNotificationResponse(response);
+    });
 
-      responseListener =
-        Notifications.addNotificationResponseReceivedListener(
-          handleNotificationResponse
-        );
-
-      Notifications.getLastNotificationResponseAsync().then((response) => {
-        if (response) handleNotificationResponse(response);
-      });
-
-      appStateSubscription = AppState.addEventListener("change", (state) => {
-        if (state === "active") {
-          const savedToken = useStore.getState().pushToken;
-          if (savedToken) registerWithAllDevices(savedToken);
-        }
-      });
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        const token = useStore.getState().pushToken;
+        if (token) registerWithAllDevices(token);
+      }
     });
 
     return () => {
-      responseListener?.remove();
-      appStateSubscription?.remove();
+      responseListener.current?.remove();
+      subscription.remove();
     };
   }, []);
 
@@ -167,14 +117,6 @@ function RootLayoutInner() {
         <Stack.Screen name="[device]" options={{ headerShown: false }} />
       </Stack>
     </View>
-  );
-}
-
-export default function RootLayout() {
-  return (
-    <ErrorBoundary>
-      <RootLayoutInner />
-    </ErrorBoundary>
   );
 }
 
