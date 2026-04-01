@@ -223,32 +223,43 @@ app.post("/notify", async (c) => {
     return c.json({ ok: true, sent: 0 });
   }
 
-  const messages: ExpoPushMessage[] = [];
+  // Group tokens by project to avoid PUSH_TOO_MANY_EXPERIENCE_IDS error.
+  // Expo requires all tokens in a single request to belong to the same project.
+  const byProject = new Map<string, ExpoPushMessage[]>();
   for (const [deviceId, token] of pushTokens) {
-    messages.push({
+    const msg: ExpoPushMessage = {
       to: token,
       sound: "default",
       title: title || "Wit",
       body,
       data: { deviceId, sessionId: session, windowIndex, paneIndex },
-    });
+    };
+    // Expo push tokens encode the project: ExponentPushToken[...] — but we can't
+    // extract the project from the token string. Instead, send each token individually
+    // so mixed-project tokens never land in the same request.
+    const key = token;
+    byProject.set(key, [msg]);
   }
 
-  const chunks = expo.chunkPushNotifications(messages);
   const tokensToRemove: string[] = [];
+  let totalSent = 0;
 
-  for (const chunk of chunks) {
-    try {
-      const tickets = await expo.sendPushNotificationsAsync(chunk);
-      tickets.forEach((ticket: ExpoPushTicket, i: number) => {
-        if (ticket.status === "error" && ticket.details?.error === "DeviceNotRegistered") {
-          const msg = chunk[i];
-          const deviceId = [...pushTokens.entries()].find(([, t]) => t === msg.to)?.[0];
-          if (deviceId) tokensToRemove.push(deviceId);
-        }
-      });
-    } catch (err) {
-      console.error("Failed to send push notifications:", err);
+  for (const [, messages] of byProject) {
+    const chunks = expo.chunkPushNotifications(messages);
+    for (const chunk of chunks) {
+      try {
+        const tickets = await expo.sendPushNotificationsAsync(chunk);
+        totalSent += chunk.length;
+        tickets.forEach((ticket: ExpoPushTicket, i: number) => {
+          if (ticket.status === "error" && ticket.details?.error === "DeviceNotRegistered") {
+            const msg = chunk[i];
+            const deviceId = [...pushTokens.entries()].find(([, t]) => t === msg.to)?.[0];
+            if (deviceId) tokensToRemove.push(deviceId);
+          }
+        });
+      } catch (err) {
+        console.error("Failed to send push notifications:", err);
+      }
     }
   }
 
@@ -257,7 +268,7 @@ app.post("/notify", async (c) => {
     console.log(`Removed invalid token for device ${id}`);
   }
 
-  return c.json({ ok: true, sent: messages.length });
+  return c.json({ ok: true, sent: totalSent });
 });
 
 export default app;
