@@ -1,12 +1,48 @@
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Stack, router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { View, Image, Text, StyleSheet, AppState } from "react-native";
+import { View, Image, Text, StyleSheet, AppState, ScrollView } from "react-native";
 import { useStore } from "../lib/store";
 import { registerPushToken } from "../lib/api";
 
 const BG = "#0a0a0f";
 const EAS_PROJECT_ID = "a671143b-7d4c-4f99-ab53-b24634e0c7e1";
+
+// Global error handler to catch native crashes that bubble to JS
+const errors: string[] = [];
+const origHandler = ErrorUtils.getGlobalHandler();
+ErrorUtils.setGlobalHandler((error: any, isFatal?: boolean) => {
+  errors.push(`${isFatal ? "FATAL: " : ""}${error?.message || error}\n${error?.stack || ""}`);
+  if (origHandler) origHandler(error, isFatal);
+});
+
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: string | null }
+> {
+  state = { error: null as string | null };
+  static getDerivedStateFromError(error: Error) {
+    return { error: `${error.message}\n${error.stack}` };
+  }
+  render() {
+    if (this.state.error || errors.length > 0) {
+      return (
+        <View style={{ flex: 1, backgroundColor: "#0a0a0f", padding: 20, paddingTop: 80 }}>
+          <Text style={{ color: "#ef4444", fontSize: 18, fontWeight: "700", marginBottom: 12 }}>
+            Crash Report
+          </Text>
+          <ScrollView>
+            <Text selectable style={{ color: "#ccc", fontSize: 12, fontFamily: "monospace" }}>
+              {this.state.error || ""}
+              {errors.join("\n---\n")}
+            </Text>
+          </ScrollView>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 async function setupNotifications() {
   try {
@@ -65,7 +101,7 @@ async function registerWithAllDevices(token: string) {
   } catch {}
 }
 
-export default function RootLayout() {
+function RootLayoutInner() {
   const setPushToken = useStore((s) => s.setPushToken);
 
   useEffect(() => {
@@ -131,6 +167,14 @@ export default function RootLayout() {
         <Stack.Screen name="[device]" options={{ headerShown: false }} />
       </Stack>
     </View>
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <ErrorBoundary>
+      <RootLayoutInner />
+    </ErrorBoundary>
   );
 }
 
