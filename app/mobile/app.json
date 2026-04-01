@@ -37,7 +37,8 @@
           }
         }
       ],
-      "./plugins/withFollyNoCoroutines"
+      "./plugins/withFollyNoCoroutines",
+      "./plugins/withNilSafeFabricProvider"
     ],
     "extra": {
       "router": {},
@@ -45,6 +46,13 @@
         "projectId": "a671143b-7d4c-4f99-ab53-b24634e0c7e1"
       }
     },
-    "owner": "owner-com"
+    "owner": "owner-com",
+    "android": {
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.owner.witcompanion"
+    }
   }
 }
