@@ -124,6 +124,9 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
           tickProgress();
         }, 1000);
 
+        // Fallback: reveal after 8s even if no data arrived (empty session, PTY error, etc.)
+        var fallbackTimer = setTimeout(function() { reveal(); }, 8000);
+
         var totalBytes = 0;
         var lastCheckBytes = 0;
         var lowCount = 0;
@@ -134,6 +137,7 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
         function reveal() {
           if (!initialLoad) return;
           clearTimeout(upgradeTimer);
+          clearTimeout(fallbackTimer);
           initialLoad = false;
           showingProgress = false;
           if (progressEl) {
@@ -201,10 +205,11 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
           }
         };
         ws.onclose = function() {
+          reveal();
           notifyRN({ type: "disconnected", unexpected: !intentionalDisconnect });
           intentionalDisconnect = false;
         };
-        ws.onerror = function() { notifyRN({ type: "error" }); };
+        ws.onerror = function() { reveal(); notifyRN({ type: "error" }); };
       }
 
       var selectAnchor = null;
