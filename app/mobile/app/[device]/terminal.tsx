@@ -662,7 +662,7 @@ export default function TerminalScreen() {
                   <TextInput
                     ref={inputRef}
                     style={styles.input}
-                    pointerEvents="none"
+                    pointerEvents={keyboardVisible ? "auto" : "none"}
                     value={inputText}
                     onChangeText={setInputText}
                     placeholder="command"
