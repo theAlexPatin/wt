@@ -57,7 +57,7 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
         term = new Terminal({
           cursorBlink: true,
           cursorStyle: "bar",
-          fontSize: 13,
+          fontSize: 11,
           fontFamily: '"SF Mono", Menlo, "DejaVu Sans Mono", monospace',
           theme: {
             background: bgColor,
