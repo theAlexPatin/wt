@@ -3,10 +3,10 @@ import { View, Text, Pressable, Modal, StyleSheet } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const HINTS = [
-  { icon: "↕", label: "Swipe up/down", desc: "Switch sessions" },
+  { icon: "↕", label: "Drag up/down", desc: "Scroll terminal history" },
   { icon: "↔", label: "Swipe left/right", desc: "Switch panes" },
-  { icon: "⇅", label: "Two-finger drag", desc: "Scroll history" },
   { icon: "◉", label: "Tap terminal", desc: "Toggle keyboard" },
+  { icon: "☰", label: "Long press + drag", desc: "Select text to copy" },
 ];
 
 export function GestureHelpButton({ bottomOffset = 0 }: { bottomOffset?: number }) {

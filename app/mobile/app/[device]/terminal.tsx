@@ -304,9 +304,9 @@ export default function TerminalScreen() {
 
   // Touch-based gesture detection (no responder system — avoids trackedTouchCount warnings):
   // - tap → toggle keyboard
-  // - 1-finger vertical swipe → switch session (or dismiss keyboard)
+  // - 1-finger vertical drag → scroll terminal history
   // - 1-finger horizontal swipe → switch pane
-  // - 2-finger vertical → scroll terminal history
+  // - long press (500ms) → text selection
   const touchRef = useRef({
     x: 0, y: 0, maxTouches: 0, triggered: false,
     scrollAccum: 0, time: 0, lastScrollTime: 0,
@@ -384,30 +384,30 @@ export default function TerminalScreen() {
       return;
     }
 
-    if (t.maxTouches >= 2) {
-      const now = Date.now();
-      const dy = e.nativeEvent.pageY - t.y;
-      const dt = now - t.lastMoveTime;
+    // 1-finger vertical drag → scroll terminal
+    const now = Date.now();
+    const dy = e.nativeEvent.pageY - t.y;
+    const dt = now - t.lastMoveTime;
 
-      if (dt > 0) {
-        const instantV = Math.abs(dy) / dt;
-        t.velocity = t.velocity * 0.6 + instantV * 0.4;
-      }
+    if (dt > 0) {
+      const instantV = Math.abs(dy) / dt;
+      t.velocity = t.velocity * 0.6 + instantV * 0.4;
+    }
 
-      const multiplier = 1 + Math.min(t.velocity * 4, 4);
-      t.scrollAccum += dy * multiplier;
-      t.y = e.nativeEvent.pageY;
-      t.lastMoveTime = now;
-      t.lastMoveY = e.nativeEvent.pageY;
+    const multiplier = 1 + Math.min(t.velocity * 4, 4);
+    t.scrollAccum += dy * multiplier;
+    t.y = e.nativeEvent.pageY;
+    t.lastMoveTime = now;
+    t.lastMoveY = e.nativeEvent.pageY;
+
+    const lines = Math.trunc(t.scrollAccum / 12);
+    if (lines !== 0) {
+      t.scrollAccum -= lines * 12;
+      t.scrollPending += lines;
       t.lastScrollTime = now;
-
-      const lines = Math.trunc(t.scrollAccum / 12);
-      if (lines !== 0) {
-        t.scrollAccum -= lines * 12;
-        t.scrollPending += lines;
-        if (!t.scrollRaf) {
-          t.scrollRaf = requestAnimationFrame(flushScroll) as unknown as number;
-        }
+      t.triggered = true;
+      if (!t.scrollRaf) {
+        t.scrollRaf = requestAnimationFrame(flushScroll) as unknown as number;
       }
     }
   }, [flushScroll]);
@@ -431,15 +431,9 @@ export default function TerminalScreen() {
     const elapsed = Date.now() - t.time;
 
     // Swipe detection (single-finger only)
-    // Vertical swipe down = dismiss keyboard, Horizontal = switch pane
+    // Horizontal swipe = switch pane
     if (t.maxTouches < 2) {
-      if (Math.abs(dy) > Math.abs(dx)) {
-        if (dy > 30 && keyboardVisible) {
-          t.triggered = true;
-          Keyboard.dismiss();
-          return;
-        }
-      } else {
+      if (Math.abs(dx) > Math.abs(dy)) {
         if (Math.abs(dx) > 30) {
           t.triggered = true;
           dx < 0 ? switchPane(1) : switchPane(-1);

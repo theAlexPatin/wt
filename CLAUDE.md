@@ -87,14 +87,17 @@ Temp sessions are named `wt-mobile-<counter>` where counter starts at `Date.now(
 ### 3. Terminal (`app/[device]/terminal.tsx`)
 - Full-screen xterm.js in a WebView (inline HTML string from `lib/terminalHtml.ts`)
 - WebSocket connection to `WS /terminal/:session/:window/:pane`
-- **Header**: back chevron (no text), session name with color dot, vertical "▲ N/M ▼" session counter (carets dim at boundaries)
+- **Header**: back chevron + device name (left), session name with color dot (center), tappable "Sessions" label (right, navigates to session list)
 - **Pane bar** (only when >1 pane): horizontal pane dots + "◂ Pane N / M ▸" label (carets dim at boundaries)
-- **Full-screen swipe overlay**: transparent touch overlay — vertical swipes switch sessions, horizontal swipes switch panes
-- **Swipeable input bar** at bottom: horizontal `ScrollView` with `pagingEnabled`, two pages:
-  - **Page 1 (command input)**: ESC (`✕`) + Ctrl+C (`■`) bubbles, glass `BlurView` pill with monospace `TextInput` + colored send button
-  - **Page 2 (quick actions)**: `⌨` back button + two-row grid of glass key caps (← ↑ ↓ → Tab ^D ^Z / ^A ^E ^K ^U ^W ^L ^R)
+- **Full-screen swipe overlay**: transparent touch overlay — vertical drag scrolls terminal, horizontal swipe switches panes
+- **Text selection**: long press (500ms) → drag to select text → Copy/Paste popup appears on release
+- **Auto-reconnect**: WebSocket reconnects automatically on app resume (background/foreground switch, screen wake)
+- **Swipeable input bar** at bottom: horizontal `ScrollView` with `pagingEnabled`, three pages (infinite cycle):
+  - **Command palette**: quick-launch buttons (cc, wt, codex, amp, owner, df)
+  - **Text input**: ESC (`✕`) + clip (`📎`) bubbles, glass `BlurView` pill with monospace `TextInput` + colored send button
+  - **Quick actions**: `⌨` back button + two-row grid of glass key caps (Tab ^D ^Z ^U ^W ↑ ⌫ / ■ ^E ^K ^R ← ↓ →)
 - Page indicator dots (tappable) between terminal and input bar, active dot tinted with `tabColor`
-- Haptic feedback on session/pane switch and action key taps
+- Haptic feedback on pane switch and action key taps
 - iOS back gesture disabled (`gestureEnabled: false` in layout)
 
 ## Key Implementation Details
@@ -105,31 +108,39 @@ The WebView sends messages to RN:
 - `{ type: "ready" }` — scripts loaded, safe to send init
 - `{ type: "connected" }` — WebSocket to server opened
 - `{ type: "disconnected" }` — WebSocket closed
-- `{ type: "swipe", direction: "left"|"right"|"up"|"down" }` — touch swipe detected (unreliable, PanResponder overlay is primary)
+- `{ type: "swipe", direction: "left"|"right" }` — horizontal swipe detected in WebView (unreliable, overlay is primary)
+- `{ type: "selectionReady", text }` — text selection completed, contains selected text
 
 RN sends messages to WebView via `postMessage`:
 - `{ type: "init", wsUrl, paneColor }` — first connection: creates xterm.js Terminal, connects WebSocket
 - `{ type: "reconnect", wsUrl, paneColor }` — subsequent connections: closes existing WS, clears terminal, reconnects
 - `{ type: "input", data }` — terminal input from the Glass input bar
 - `{ type: "disconnect" }` — close WebSocket
+- `{ type: "scroll", lines }` — scroll xterm.js viewport (positive = up, negative = down)
+- `{ type: "selectStart", x, y }` — begin text selection at coordinates
+- `{ type: "selectMove", x, y }` — extend selection to coordinates
+- `{ type: "selectEnd" }` — finalize selection, triggers `selectionReady` response
+- `{ type: "clearSelection" }` — clear current text selection
 
 The `initialized` state flag tracks whether "init" has been sent. The `webViewReady` flag gates sending any messages until the WebView signals "ready". This prevents race conditions where `postMessage` fires before xterm.js is loaded.
 
-### Swipe Navigation
+### Touch Overlay & Gestures
 
-WebView consumes all touch events (xterm.js + tmux mouse mode), so swipe detection inside the WebView doesn't work. The solution is a **full-screen transparent touch overlay** using raw `onTouchStart/Move/End` events (not PanResponder — avoids `trackedTouchCount` warnings):
+WebView consumes all touch events (xterm.js + tmux mouse mode), so gesture detection inside the WebView doesn't work. The solution is a **full-screen transparent touch overlay** using raw `onTouchStart/Move/End` events (not PanResponder — avoids `trackedTouchCount` warnings):
 
-- Taps pass through to toggle keyboard focus
-- 1-finger vertical swipe → switch session (swipe up = next, down = previous; down dismisses keyboard if visible)
-- 1-finger horizontal swipe → switch pane (swipe left = next, right = previous)
-- 2-finger vertical → scroll terminal history (velocity-accelerated)
+- **Tap** → toggle keyboard (focus/blur TextInput)
+- **Vertical drag** → scroll terminal history (velocity-accelerated, via xterm.js local scrollback — no server round-trip)
+- **Horizontal swipe** → switch pane (swipe left = next, right = previous)
+- **Long press (500ms) + drag** → text selection (coordinates mapped to terminal cells via xterm.js render dimensions, selection drawn with `term.select()`)
+
+Scrolling uses xterm.js's built-in scrollback buffer (10,000 lines), NOT tmux copy-mode. This avoids flashing, snap-to-bottom, and server round-trips. New output appends to the buffer without disrupting scroll position.
 
 ### Swipeable Input Bar
 
 The bottom input bar is a horizontal `ScrollView` with `pagingEnabled` containing two pages. Swipe left for quick action keys, swipe right (or tap `⌨`) for the command input.
 
 **Keyboard independence**: Swiping between pages must NOT open or close the keyboard. This is achieved by:
-- `TextInput` has `pointerEvents="none"` — prevents accidental focus during swipe gestures
+- `TextInput` has `pointerEvents={keyboardVisible ? "auto" : "none"}` — allows cursor positioning when keyboard is open, prevents accidental focus during swipes when closed
 - `inputWrap` is a `Pressable` that programmatically focuses the `TextInput` on tap (only fires on completed taps, not swipes)
 - `keyboardShouldPersistTaps="always"` on the ScrollView — prevents keyboard dismissal when tapping action buttons or the `⌨` back button
 - No `Keyboard.dismiss()` calls in page change handlers
@@ -144,9 +155,9 @@ Viewing a pane on mobile must NOT affect the tmux layout on the desktop. The gro
 - The `dispose()` function checks `#{window_zoomed_flag}` and unzooms if needed
 
 ### Session/Pane Navigation
-- Switching sessions resets pane index to 0
+- Sessions are switched by navigating back to the session list (tappable "Sessions" label in header)
 - Switching panes within a session keeps the session index
-- Navigation wraps around (modular arithmetic) — last session wraps to first and vice versa
+- Pane navigation wraps around (modular arithmetic) — last pane wraps to first and vice versa
 
 ### tmux Data Layer
 - `tmux list-sessions` with `|||` separator (not `\t`) to avoid shell interpolation issues
