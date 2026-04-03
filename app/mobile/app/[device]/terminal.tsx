@@ -135,8 +135,7 @@ export default function TerminalScreen() {
   const [activePage, setActivePage] = useState(1); // logical: 0=commands, 1=input, 2=keystrokes
   const [barWidth, setBarWidth] = useState(SCREEN_WIDTH - 16);
   const [paneGridVisible, setPaneGridVisible] = useState(false);
-  const [selectMode, setSelectMode] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [selectionText, setSelectionText] = useState<string | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialScrollRef = useRef(false);
 
@@ -222,13 +221,8 @@ export default function TerminalScreen() {
           setTimeout(() => reconnect(), 500);
         }
       }
-      if (msg.type === "selection") {
-        if (msg.text) {
-          Clipboard.setStringAsync(msg.text);
-          setCopied(true);
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          setTimeout(() => setCopied(false), 1500);
-        }
+      if (msg.type === "selectionReady") {
+        if (msg.text) setSelectionText(msg.text);
       }
       if (msg.type === "swipe") {
         if (msg.direction === "left") switchPane(1);
@@ -242,8 +236,13 @@ export default function TerminalScreen() {
   }, []);
 
   const handleCopy = useCallback(() => {
-    webViewRef.current?.postMessage(JSON.stringify({ type: "getSelection" }));
-  }, []);
+    if (selectionText) {
+      Clipboard.setStringAsync(selectionText);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setSelectionText(null);
+      webViewRef.current?.postMessage(JSON.stringify({ type: "clearSelection" }));
+    }
+  }, [selectionText]);
 
   const handlePaste = useCallback(async () => {
     const text = await Clipboard.getStringAsync();
@@ -251,11 +250,12 @@ export default function TerminalScreen() {
       sendRaw(text);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
+    setSelectionText(null);
+    webViewRef.current?.postMessage(JSON.stringify({ type: "clearSelection" }));
   }, [sendRaw]);
 
-  const exitSelectMode = useCallback(() => {
-    setSelectMode(false);
-    setCopied(false);
+  const dismissSelection = useCallback(() => {
+    setSelectionText(null);
     webViewRef.current?.postMessage(JSON.stringify({ type: "clearSelection" }));
   }, []);
 
@@ -312,6 +312,7 @@ export default function TerminalScreen() {
     scrollAccum: 0, time: 0, lastScrollTime: 0,
     lastMoveTime: 0, lastMoveY: 0, velocity: 0,
     scrollPending: 0, scrollRaf: 0,
+    selecting: false,
   });
 
   const flushScroll = useCallback(() => {
@@ -335,20 +336,27 @@ export default function TerminalScreen() {
       scrollAccum: 0, time: now, lastScrollTime: touchRef.current.lastScrollTime,
       lastMoveTime: now, lastMoveY: e.nativeEvent.pageY, velocity: 0,
       scrollPending: 0, scrollRaf: 0,
+      selecting: false,
     };
-    // Long press detection: 500ms hold → enter selection mode
+    // Dismiss selection popup if visible
+    if (selectionText) {
+      dismissSelection();
+    }
+    const locX = e.nativeEvent.locationX;
+    const locY = e.nativeEvent.locationY;
+    // Long press detection: 500ms hold → start text selection
     if (longPressTimer.current) clearTimeout(longPressTimer.current);
     longPressTimer.current = setTimeout(() => {
       longPressTimer.current = null;
       const t = touchRef.current;
       if (!t.triggered && t.maxTouches < 2) {
         t.triggered = true;
-        setSelectMode(true);
+        t.selecting = true;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-        if (keyboardVisible) Keyboard.dismiss();
+        webViewRef.current?.postMessage(JSON.stringify({ type: "selectStart", x: locX, y: locY }));
       }
     }, 500);
-  }, [keyboardVisible]);
+  }, [keyboardVisible, selectionText, dismissSelection]);
 
   const onOverlayTouchMove = useCallback((e: any) => {
     const t = touchRef.current;
@@ -356,7 +364,7 @@ export default function TerminalScreen() {
     const count = Array.isArray(touches) ? touches.length : 1;
     if (count > t.maxTouches) t.maxTouches = count;
 
-    // Cancel long press if moved too far
+    // Cancel long press if moved too far (before selection starts)
     if (longPressTimer.current) {
       const dx = Math.abs(e.nativeEvent.pageX - t.x);
       const dy = Math.abs(e.nativeEvent.pageY - t.y);
@@ -364,6 +372,16 @@ export default function TerminalScreen() {
         clearTimeout(longPressTimer.current);
         longPressTimer.current = null;
       }
+    }
+
+    // Forward drag coordinates during text selection
+    if (t.selecting) {
+      webViewRef.current?.postMessage(JSON.stringify({
+        type: "selectMove",
+        x: e.nativeEvent.locationX,
+        y: e.nativeEvent.locationY,
+      }));
+      return;
     }
 
     if (t.maxTouches >= 2) {
@@ -400,6 +418,12 @@ export default function TerminalScreen() {
       longPressTimer.current = null;
     }
     const t = touchRef.current;
+    // Finalize text selection
+    if (t.selecting) {
+      t.selecting = false;
+      webViewRef.current?.postMessage(JSON.stringify({ type: "selectEnd" }));
+      return;
+    }
     if (t.triggered) return;
 
     const dx = e.nativeEvent.pageX - t.x;
@@ -537,33 +561,25 @@ export default function TerminalScreen() {
           mixedContentMode="always"
           allowsInlineMediaPlayback
         />
-        {!selectMode && (
-          <View
-            style={styles.swipeOverlay}
-            onTouchStart={onOverlayTouchStart}
-            onTouchMove={onOverlayTouchMove}
-            onTouchEnd={onOverlayTouchEnd}
-          />
-        )}
-        {selectMode && (
-          <View style={[styles.selectToolbar, { backgroundColor: bgColor + "ee" }]}>
+        <View
+          style={styles.swipeOverlay}
+          onTouchStart={onOverlayTouchStart}
+          onTouchMove={onOverlayTouchMove}
+          onTouchEnd={onOverlayTouchEnd}
+        />
+        {selectionText && (
+          <View style={[styles.selectPopup, { backgroundColor: bgColor + "f0" }]}>
             <Pressable
               style={[styles.selectBtn, { borderColor: tabColor + "40" }]}
               onPress={handleCopy}
             >
-              <Text style={styles.selectBtnText}>{copied ? "Copied!" : "Copy"}</Text>
+              <Text style={styles.selectBtnText}>Copy</Text>
             </Pressable>
             <Pressable
               style={[styles.selectBtn, { borderColor: tabColor + "40" }]}
               onPress={handlePaste}
             >
               <Text style={styles.selectBtnText}>Paste</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.selectBtn, { backgroundColor: tabColor, borderColor: tabColor }]}
-              onPress={exitSelectMode}
-            >
-              <Text style={[styles.selectBtnText, { color: "#fff" }]}>Done</Text>
             </Pressable>
           </View>
         )}
@@ -882,22 +898,21 @@ const styles = StyleSheet.create({
     bottom: 0,
     zIndex: 10,
   },
-  // Selection mode toolbar
-  selectToolbar: {
+  // Selection popup
+  selectPopup: {
     position: "absolute",
     bottom: 8,
-    left: 16,
-    right: 16,
+    alignSelf: "center",
     flexDirection: "row",
-    gap: 8,
-    padding: 8,
-    borderRadius: 12,
+    gap: 6,
+    padding: 6,
+    borderRadius: 10,
     zIndex: 20,
   },
   selectBtn: {
-    flex: 1,
-    height: 40,
-    borderRadius: 10,
+    paddingHorizontal: 16,
+    height: 36,
+    borderRadius: 8,
     borderWidth: 1,
     backgroundColor: "rgba(255,255,255,0.08)",
     alignItems: "center",

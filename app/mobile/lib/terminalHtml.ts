@@ -205,6 +205,22 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
         ws.onerror = function() { notifyRN({ type: "error" }); };
       }
 
+      var selectAnchor = null;
+
+      function coordsToCell(x, y) {
+        var termEl = document.getElementById("terminal");
+        if (!termEl || !term) return { col: 0, row: 0 };
+        var rect = termEl.getBoundingClientRect();
+        var dims = term._core._renderService.dimensions;
+        var cellW = dims.css.cell.width;
+        var cellH = dims.css.cell.height;
+        var col = Math.floor((x - rect.left) / cellW);
+        var row = Math.floor((y - rect.top) / cellH);
+        col = Math.max(0, Math.min(col, term.cols - 1));
+        row = Math.max(0, Math.min(row, term.rows - 1));
+        return { col: col, row: row };
+      }
+
       var intentionalDisconnect = false;
       function disconnect() { intentionalDisconnect = true; if (ws) { ws.close(); ws = null; } }
 
@@ -239,8 +255,30 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
             connect(msg.wsUrl);
           }
           else if (msg.type === "disconnect") disconnect();
-          else if (msg.type === "getSelection") {
-            notifyRN({ type: "selection", text: term ? term.getSelection() : "" });
+          else if (msg.type === "selectStart") {
+            var cell = coordsToCell(msg.x, msg.y);
+            selectAnchor = cell;
+            if (term) term.select(cell.col, cell.row + term.buffer.active.viewportY, 1);
+          }
+          else if (msg.type === "selectMove") {
+            if (!selectAnchor || !term) return;
+            var end = coordsToCell(msg.x, msg.y);
+            var sCol = selectAnchor.col, sRow = selectAnchor.row;
+            var eCol = end.col, eRow = end.row;
+            if (eRow < sRow || (eRow === sRow && eCol < sCol)) {
+              var len = (sRow - eRow) * term.cols + (sCol - eCol) + 1;
+              term.select(eCol, eRow + term.buffer.active.viewportY, len);
+            } else {
+              var len = (eRow - sRow) * term.cols + (eCol - sCol) + 1;
+              term.select(sCol, sRow + term.buffer.active.viewportY, len);
+            }
+          }
+          else if (msg.type === "selectEnd") {
+            selectAnchor = null;
+            if (term) {
+              var text = term.getSelection();
+              if (text) notifyRN({ type: "selectionReady", text: text });
+            }
           }
           else if (msg.type === "clearSelection") {
             if (term) term.clearSelection();
