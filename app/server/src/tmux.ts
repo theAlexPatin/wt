@@ -1,5 +1,6 @@
 import { execFileSync } from "child_process";
 import { homedir } from "os";
+import type { WtConfig } from "./worktrees";
 
 const SEP = "|||";
 
@@ -28,6 +29,8 @@ export interface TmuxPane {
   width: number;
   height: number;
   title: string;
+  currentCommand: string;
+  isClaudeCode: boolean;
 }
 
 function tmuxRun(args: string[]): string {
@@ -92,7 +95,7 @@ export function getSessionOption(sessionName: string, option: string): string | 
 /** List all panes in a session */
 export async function listPanes(sessionName: string): Promise<TmuxPane[]> {
   try {
-    const fmt = `#{pane_index}${SEP}#{window_index}${SEP}#{window_name}${SEP}#{pane_active}${SEP}#{pane_width}${SEP}#{pane_height}${SEP}#{pane_title}`;
+    const fmt = `#{pane_index}${SEP}#{window_index}${SEP}#{window_name}${SEP}#{pane_active}${SEP}#{pane_width}${SEP}#{pane_height}${SEP}#{pane_title}${SEP}#{pane_current_command}`;
     const result = tmuxRun(["list-panes", "-t", sessionName, "-s", "-F", fmt]);
 
     return result
@@ -101,6 +104,11 @@ export async function listPanes(sessionName: string): Promise<TmuxPane[]> {
       .filter(Boolean)
       .map((line) => {
         const parts = line.split(SEP);
+        const title = parts[6] ?? "";
+        const currentCommand = parts[7] ?? "";
+        // Claude Code sets pane_title to "Claude Code" (with optional status prefix)
+        // and pane_current_command to its semver version (e.g. "2.1.91")
+        const isClaudeCode = title.includes("Claude Code") || /^\d+\.\d+\.\d+/.test(currentCommand);
         return {
           index: parseInt(parts[0] ?? "0", 10),
           windowIndex: parseInt(parts[1] ?? "0", 10),
@@ -108,7 +116,9 @@ export async function listPanes(sessionName: string): Promise<TmuxPane[]> {
           active: parts[3] === "1",
           width: parseInt(parts[4] ?? "0", 10),
           height: parseInt(parts[5] ?? "0", 10),
-          title: parts[6] ?? "",
+          title,
+          currentCommand,
+          isClaudeCode,
         };
       });
   } catch {
@@ -168,6 +178,55 @@ export function capturePane(
 ): string {
   const target = `${sessionName}:${windowIndex}.${paneIndex}`;
   return tmuxRun(["capture-pane", "-t", target, "-p", "-J", "-S", String(-lines)]);
+}
+
+/** Check if a specific tmux session exists */
+export function sessionExists(name: string): boolean {
+  try {
+    tmuxRun(["has-session", "-t", name]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Create a fully-configured tmux session for a worktree.
+ * Replicates what `wt cd` / `__wt_enter_tmux` does, but server-side.
+ * Returns the session name.
+ */
+export function createSessionInWorktree(
+  wtPath: string,
+  config: WtConfig,
+): string {
+  // Compute session name from config title, falling back to directory name
+  let sessionName = config.tabTitle || wtPath.split("/").pop() || "session";
+  // Slashes aren't valid in tmux session names
+  sessionName = sessionName.replace(/\//g, "-");
+
+  // If session already exists, return it (idempotent)
+  if (sessionExists(sessionName)) {
+    return sessionName;
+  }
+
+  // Create detached session with correct working directory
+  tmuxRun(["new-session", "-d", "-s", sessionName, "-c", wtPath]);
+
+  // Set @wt_config_path so the session list can find config
+  const configPath = `${wtPath}/.wt.local.json`;
+  tmuxRun(["set-option", "-t", sessionName, "@wt_config_path", configPath]);
+
+  // Set session-renamed hook for persistence
+  const hookCmd = `run-shell '${homedir()}/.scripts/wt/_on_session_rename.sh'`;
+  tmuxRun(["set-hook", "-t", sessionName, "session-renamed", hookCmd]);
+
+  // Apply pane background color
+  if (config.paneColor) {
+    tmuxRun(["set-option", "-t", sessionName, "-w", "window-style", `bg=${config.paneColor}`]);
+    tmuxRun(["set-option", "-t", sessionName, "-w", "window-active-style", `bg=${config.paneColor}`]);
+  }
+
+  return sessionName;
 }
 
 /** Check if tmux server is running */

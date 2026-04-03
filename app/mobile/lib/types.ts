@@ -11,6 +11,7 @@ export interface SessionPane {
   windowName: string;
   active: boolean;
   size: string;
+  isClaudeCode?: boolean;
 }
 
 export interface Session {
@@ -25,4 +26,25 @@ export interface Session {
   worktree: string | null;
   attached: boolean;
   created: string;
+}
+
+export interface WorktreeInfo {
+  name: string;
+  tabTitle: string;
+  tabColor?: string;
+  paneColor?: string;
+  path: string;
+}
+
+export interface CreateSessionResult {
+  name: string;
+  tabColor?: string;
+  paneColor?: string;
+}
+
+export interface CreateWorktreeResult extends CreateSessionResult {
+  worktree: string;
+  path: string;
+  tabTitle: string;
+  setupRunning: boolean;
 }

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import {
   Platform,
   LayoutAnimation,
   UIManager,
+  Animated,
 } from "react-native";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -26,6 +27,7 @@ import {
 } from "../../lib/api";
 import type { Session } from "../../lib/types";
 import { SwipeableRow, type SwipeableRowRef } from "../../lib/SwipeableRow";
+import { CreateSessionFlow } from "../../lib/CreateSessionFlow";
 
 const BG = "#0a0a0f";
 const ITEM_SPACING = 10;
@@ -51,6 +53,74 @@ export default function SessionListScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+
+  // Revolver menu + create flow
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [flowMode, setFlowMode] = useState<"new" | "existing" | null>(null);
+  const menuAnim = useRef([
+    new Animated.Value(0),
+    new Animated.Value(0),
+    new Animated.Value(0),
+  ]).current;
+  const fabRotation = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (menuOpen) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      menuAnim.forEach((anim, i) => {
+        setTimeout(() => {
+          Animated.spring(anim, {
+            toValue: 1,
+            friction: 8,
+            tension: 80,
+            useNativeDriver: true,
+          }).start();
+        }, i * 50);
+      });
+      Animated.spring(fabRotation, {
+        toValue: 1,
+        friction: 8,
+        tension: 80,
+        useNativeDriver: true,
+      }).start();
+    } else {
+      Animated.parallel([
+        ...menuAnim.map((anim) =>
+          Animated.timing(anim, { toValue: 0, duration: 150, useNativeDriver: true })
+        ),
+        Animated.timing(fabRotation, { toValue: 0, duration: 150, useNativeDriver: true }),
+      ]).start();
+    }
+  }, [menuOpen]);
+
+  const closeMenu = () => setMenuOpen(false);
+
+  const handleMenuOption = (option: "new" | "existing" | "terminal") => {
+    closeMenu();
+    if (option === "terminal") {
+      handleCreate();
+    } else {
+      setFlowMode(option);
+    }
+  };
+
+  const handleFlowCreated = async (sessionName: string) => {
+    setFlowMode(null);
+    const data = await fetchSessions(device!);
+    const sorted = sortSessions(data);
+    setSessions(sorted);
+    const idx = sorted.findIndex((s) => s.id === sessionName);
+    if (idx >= 0) {
+      router.push({
+        pathname: "/[device]/terminal",
+        params: {
+          device: deviceId,
+          sessionId: sessionName,
+          sessionIndex: idx.toString(),
+        },
+      });
+    }
+  };
 
   // Drag state
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -407,16 +477,88 @@ export default function SessionListScreen() {
         )}
       </ScrollView>
 
-      {/* Floating + button */}
+      {/* Revolver menu overlay */}
+      {menuOpen && (
+        <Pressable style={styles.menuOverlay} onPress={closeMenu} />
+      )}
+
+      {/* Revolver menu items */}
+      {(() => {
+        const items = [
+          { key: "new" as const, label: "New worktree", icon: "+" },
+          { key: "existing" as const, label: "Existing worktree", icon: "~" },
+          { key: "terminal" as const, label: "New terminal", icon: ">_" },
+        ];
+        const fabBottom = insets.bottom + 20;
+        return items.map((item, i) => {
+          const anim = menuAnim[i]!;
+          const offset = (i + 1) * 58;
+          return (
+            <Animated.View
+              key={item.key}
+              pointerEvents={menuOpen ? "auto" : "none"}
+              style={[
+                styles.menuItem,
+                {
+                  bottom: fabBottom + 8,
+                  right: 20,
+                  opacity: anim,
+                  transform: [
+                    { translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [0, -offset] }) },
+                    { scale: anim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.3, 0.8, 1] }) },
+                  ],
+                },
+              ]}
+            >
+              <Pressable
+                style={styles.menuItemPressable}
+                onPress={() => handleMenuOption(item.key)}
+              >
+                <View style={styles.menuIconWrap}>
+                  <Text style={styles.menuIcon}>{item.icon}</Text>
+                </View>
+                <Text style={styles.menuLabel}>{item.label}</Text>
+              </Pressable>
+            </Animated.View>
+          );
+        });
+      })()}
+
+      {/* FAB */}
       <Pressable
         style={[styles.fab, { bottom: insets.bottom + 20 }]}
-        onPress={handleCreate}
+        onPress={() => setMenuOpen((v) => !v)}
         disabled={creating}
       >
-        <Text style={[styles.fabIcon, creating && { opacity: 0.4 }]}>
+        <Animated.Text
+          style={[
+            styles.fabIcon,
+            creating && { opacity: 0.4 },
+            {
+              transform: [
+                {
+                  rotate: fabRotation.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: ["0deg", "45deg"],
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
           {"+"}
-        </Text>
+        </Animated.Text>
       </Pressable>
+
+      {/* Create session flow */}
+      {device && (
+        <CreateSessionFlow
+          device={device}
+          mode={flowMode}
+          onDismiss={() => setFlowMode(null)}
+          onCreated={handleFlowCreated}
+        />
+      )}
 
       {/* Rename modal */}
       <Modal
@@ -580,6 +722,50 @@ const styles = StyleSheet.create({
   emptyText: { color: "#666", fontSize: 16 },
   errorText: { color: "#ef4444", fontSize: 16 },
 
+  // Revolver menu
+  menuOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    zIndex: 10,
+  },
+  menuItem: {
+    position: "absolute",
+    zIndex: 11,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  menuItemPressable: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  menuLabel: {
+    color: "#e4e4e8",
+    fontSize: 15,
+    fontWeight: "600",
+    backgroundColor: "#1a1a2a",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#2a2a3a",
+    overflow: "hidden",
+  },
+  menuIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#D4900A",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  menuIcon: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "700",
+    fontFamily: Platform.OS === "ios" ? "SF Mono" : "monospace",
+  },
+
   // FAB
   fab: {
     position: "absolute",
@@ -595,6 +781,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.4,
     shadowRadius: 12,
     elevation: 8,
+    zIndex: 12,
   },
   fabIcon: {
     color: "#fff",

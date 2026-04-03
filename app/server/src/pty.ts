@@ -89,6 +89,18 @@ export function createPaneSession(
     // Pane may not exist — still attach
   }
 
+  // Send pane metadata so client knows what's running
+  try {
+    const currentCommand = tmux(tmuxPath, [
+      "display-message", "-t", paneTarget, "-p", "#{pane_current_command}",
+    ]);
+    const paneTitle = tmux(tmuxPath, [
+      "display-message", "-t", paneTarget, "-p", "#{pane_title}",
+    ]);
+    const isClaudeCode = paneTitle.includes("Claude Code") || /^\d+\.\d+\.\d+/.test(currentCommand);
+    ws.send(JSON.stringify({ type: "paneInfo", isClaudeCode }));
+  } catch {}
+
   // Send scrollback size so client can show progress
   try {
     const historySize = parseInt(

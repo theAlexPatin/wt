@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { Expo, type ExpoPushMessage, type ExpoPushTicket } from "expo-server-sdk";
-import { listSessions, listPanes, isTmuxRunning, createSession, killSession, renameSession, splitPane, killPane, capturePane, getSessionOption } from "./tmux";
-import { readWtConfig, parseConfigPath } from "./worktrees";
+import { listSessions, listPanes, isTmuxRunning, createSession, killSession, renameSession, splitPane, killPane, capturePane, getSessionOption, createSessionInWorktree } from "./tmux";
+import { readWtConfig, parseConfigPath, listRepos, listWorktreesWithConfig, createWorktree } from "./worktrees";
 import { activeTerminals } from "./state";
 
 const UPLOAD_DIR = "/tmp/wt-uploads";
@@ -66,6 +66,7 @@ app.get("/sessions", async (c) => {
           windowName: p.windowName,
           active: p.active,
           size: `${p.width}x${p.height}`,
+          isClaudeCode: p.isClaudeCode,
         })),
         repo,
         worktree,
@@ -76,6 +77,53 @@ app.get("/sessions", async (c) => {
   );
 
   return c.json(enriched);
+});
+
+// --- Worktree routes ---
+
+app.get("/repos", async (c) => {
+  const repos = await listRepos();
+  return c.json(repos);
+});
+
+app.get("/repos/:repo/worktrees", async (c) => {
+  const repo = decodeURIComponent(c.req.param("repo"));
+  const worktrees = await listWorktreesWithConfig(repo);
+  return c.json(worktrees);
+});
+
+app.post("/sessions/create-in-worktree", async (c) => {
+  try {
+    const { repo, worktree } = await c.req.json();
+    if (!repo || !worktree) {
+      return c.json({ error: "repo and worktree are required" }, 400);
+    }
+    const worktrees = await listWorktreesWithConfig(repo);
+    const wt = worktrees.find((w) => w.name === worktree);
+    if (!wt) {
+      return c.json({ error: `Worktree ${repo}/${worktree} not found` }, 404);
+    }
+    const config = await readWtConfig(join(wt.path, ".wt.local.json"));
+    const name = createSessionInWorktree(wt.path, config);
+    return c.json({ name, tabColor: config.tabColor, paneColor: config.paneColor });
+  } catch (err: any) {
+    return c.json({ error: err.message || "Failed to create session" }, 500);
+  }
+});
+
+app.post("/sessions/create-worktree", async (c) => {
+  try {
+    const { repo, name } = await c.req.json();
+    if (!repo || !name) {
+      return c.json({ error: "repo and name are required" }, 400);
+    }
+    const result = await createWorktree(repo, name);
+    const config = { tabColor: result.tabColor, paneColor: result.paneColor, tabTitle: result.tabTitle };
+    const sessionName = createSessionInWorktree(result.path, config);
+    return c.json({ name: sessionName, ...result });
+  } catch (err: any) {
+    return c.json({ error: err.message || "Failed to create worktree" }, 500);
+  }
 });
 
 app.post("/sessions", async (c) => {
@@ -122,6 +170,7 @@ app.post("/sessions/:name/panes/split", async (c) => {
       windowName: p.windowName,
       active: p.active,
       size: `${p.width}x${p.height}`,
+      currentCommand: p.currentCommand,
     })) });
   } catch {
     return c.json({ error: "Failed to split pane" }, 500);
@@ -144,6 +193,7 @@ app.delete("/sessions/:name/panes/:windowIndex/:paneIndex", async (c) => {
       windowName: p.windowName,
       active: p.active,
       size: `${p.width}x${p.height}`,
+      currentCommand: p.currentCommand,
     })), sessionKilled: false });
   } catch {
     return c.json({ error: "Failed to kill pane" }, 500);

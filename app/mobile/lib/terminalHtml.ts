@@ -181,10 +181,11 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
         ws.onopen = function() { sendResize(); notifyRN({ type: "connected" }); };
         ws.onmessage = function(e) {
           var data = e.data;
-          // First message from server is history metadata — swallow it
+          // First messages from server are metadata — swallow and forward to RN
           if (initialLoad && !gotMeta) {
             try {
               var meta = JSON.parse(data);
+              if (meta.type === "paneInfo") { notifyRN(meta); return; }
               if (meta.type === "history") { gotMeta = true; return; }
             } catch(ex) {}
           }

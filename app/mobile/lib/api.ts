@@ -1,4 +1,4 @@
-import type { Device, Session, SessionPane } from "./types";
+import type { Device, Session, SessionPane, WorktreeInfo, CreateSessionResult, CreateWorktreeResult } from "./types";
 
 function baseUrl(device: Device): string {
   return `http://${device.host}:${device.port}`;
@@ -117,6 +117,50 @@ export async function capturePane(
   const res = await fetch(
     `${baseUrl(device)}/sessions/${encodeURIComponent(sessionName)}/panes/${windowIndex}/${paneIndex}/capture?lines=${lines}`
   );
+  return res.json();
+}
+
+export async function fetchRepos(device: Device): Promise<string[]> {
+  const res = await fetch(`${baseUrl(device)}/repos`);
+  return res.json();
+}
+
+export async function fetchWorktrees(device: Device, repo: string): Promise<WorktreeInfo[]> {
+  const res = await fetch(`${baseUrl(device)}/repos/${encodeURIComponent(repo)}/worktrees`);
+  return res.json();
+}
+
+export async function createSessionInWorktree(
+  device: Device,
+  repo: string,
+  worktree: string
+): Promise<CreateSessionResult> {
+  const res = await fetch(`${baseUrl(device)}/sessions/create-in-worktree`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repo, worktree }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "Unknown error" }));
+    throw new Error(err.error);
+  }
+  return res.json();
+}
+
+export async function createNewWorktree(
+  device: Device,
+  repo: string,
+  name: string
+): Promise<CreateWorktreeResult> {
+  const res = await fetch(`${baseUrl(device)}/sessions/create-worktree`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repo, name }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "Unknown error" }));
+    throw new Error(err.error);
+  }
   return res.json();
 }
 

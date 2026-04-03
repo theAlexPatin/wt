@@ -13,6 +13,7 @@ import {
   Dimensions,
   Animated,
   AppState,
+  Modal,
 } from "react-native";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { WebView } from "react-native-webview";
@@ -55,6 +56,71 @@ const COMMANDS = [
   { cmd: "owner", type: "image" as const, source: require("../../assets/commands/owner.png"), bg: "#0CB230", iconSize: 40, tintColor: undefined, toPage: 2 },
   { cmd: "df",    label: ".df", type: "text" as const,  bg: "rgba(255,255,255,0.15)", color: "#ccc", iconSize: undefined, source: undefined, toPage: 2 },
 ];
+
+// --- Skill Palette ---
+
+type SkillCategory = "ship" | "review" | "code" | "design" | "security" | "ops" | "config";
+
+const CATEGORY_COLORS: Record<SkillCategory, string> = {
+  ship: "#0CB230",
+  review: "#2D6BE4",
+  code: "#E07B39",
+  design: "#A855F7",
+  security: "#EF4444",
+  ops: "#EAB308",
+  config: "#6B7280",
+};
+
+const CATEGORY_LABELS: Record<SkillCategory, string> = {
+  ship: "Ship",
+  review: "Review",
+  code: "Code",
+  design: "Design",
+  security: "Security",
+  ops: "Ops",
+  config: "Config",
+};
+
+const CATEGORY_ORDER: SkillCategory[] = ["ship", "review", "code", "design", "security", "ops", "config"];
+
+interface Skill {
+  name: string;
+  label: string;
+  icon: string;
+  category: SkillCategory;
+  needsArgs: boolean;
+  description: string;
+}
+
+const SKILLS: Skill[] = [
+  { name: "push", label: "push", icon: "🚀", category: "ship", needsArgs: false, description: "Stage, commit, sync, and push" },
+  { name: "owner-pr", label: "owner-pr", icon: "📦", category: "ship", needsArgs: false, description: "Create PR via Graphite" },
+  { name: "yeet-mode", label: "yeet", icon: "⚡", category: "ship", needsArgs: true, description: "Branch → implement → PR → Slack" },
+  { name: "address-comments", label: "address", icon: "💬", category: "review", needsArgs: false, description: "Fix PR review comments and reply" },
+  { name: "pr-review", label: "pr-review", icon: "👀", category: "review", needsArgs: false, description: "Request review from teammate" },
+  { name: "pr-monitor", label: "pr-monitor", icon: "🔄", category: "review", needsArgs: true, description: "Watch PR CI and fix failures" },
+  { name: "architect-doctor", label: "architect", icon: "🏗", category: "code", needsArgs: false, description: "Architecture review and refactor plan" },
+  { name: "simplify", label: "simplify", icon: "✨", category: "code", needsArgs: false, description: "Review changed code for quality" },
+  { name: "verify-cli", label: "verify", icon: "✅", category: "code", needsArgs: true, description: "Verify CLI matches BEHAVIOR.md" },
+  { name: "ux-doctor", label: "ux-doctor", icon: "🎨", category: "design", needsArgs: false, description: "Mobile-first UX redesign plan" },
+  { name: "ui-expert", label: "ui-expert", icon: "🖼", category: "design", needsArgs: false, description: "Frontend arch from UX redesign" },
+  { name: "dx-stickler", label: "dx-stickler", icon: "🔧", category: "design", needsArgs: false, description: "TypeScript API design review" },
+  { name: "security-nerd", label: "sec-nerd", icon: "🔒", category: "security", needsArgs: false, description: "App security audit and hardening" },
+  { name: "security-platform", label: "sec-plat", icon: "🛡", category: "security", needsArgs: false, description: "Security architecture design" },
+  { name: "pls-fix", label: "pls-fix", icon: "🔥", category: "ops", needsArgs: true, description: "Debug from Slack thread context" },
+  { name: "new-worktree", label: "worktree", icon: "🌿", category: "ops", needsArgs: true, description: "Create git worktree and switch in" },
+  { name: "rename", label: "rename", icon: "✏️", category: "ops", needsArgs: false, description: "Rename tmux session from context" },
+  { name: "collab", label: "collab", icon: "🤝", category: "ops", needsArgs: true, description: "Collaborate with Claude in pane" },
+  { name: "generally-manage", label: "manage", icon: "📋", category: "ops", needsArgs: true, description: "Orchestrate plan across panes" },
+  { name: "df-new-secret", label: "df-secret", icon: "🔑", category: "config", needsArgs: false, description: "Discover and register new secrets" },
+  { name: "schedule", label: "schedule", icon: "⏰", category: "config", needsArgs: true, description: "Create/manage scheduled agents" },
+  { name: "update-config", label: "config", icon: "⚙️", category: "config", needsArgs: true, description: "Configure Claude Code settings" },
+];
+
+const SKILLS_BY_CATEGORY = CATEGORY_ORDER.map((cat) => ({
+  category: cat,
+  skills: SKILLS.filter((s) => s.category === cat),
+}));
 
 const REPEAT_DELAY = 400;
 const REPEAT_INTERVAL = 80;
@@ -130,9 +196,12 @@ export default function TerminalScreen() {
   const [activePage, setActivePage] = useState(1); // logical: 0=commands, 1=input, 2=keystrokes
   const [barWidth, setBarWidth] = useState(SCREEN_WIDTH - 16);
   const [paneGridVisible, setPaneGridVisible] = useState(false);
+  const [skillPaletteVisible, setSkillPaletteVisible] = useState(false);
+  const [liveIsClaudeCode, setLiveIsClaudeCode] = useState<boolean | null>(null);
   const [selectionText, setSelectionText] = useState<string | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialScrollRef = useRef(false);
+  const inputExpandAnim = useRef(new Animated.Value(0)).current; // 0=collapsed bubbles visible, 1=expanded full-width
   const swipeX = useRef(new Animated.Value(0)).current;
   const swipeOpacity = swipeX.interpolate({
     inputRange: [-SCREEN_WIDTH, -SCREEN_WIDTH * 0.5, 0, SCREEN_WIDTH * 0.5, SCREEN_WIDTH],
@@ -144,7 +213,13 @@ export default function TerminalScreen() {
   const tabColor = currentSession?.tabColor ?? "#555";
   const bgColor = currentSession?.paneColor ?? "#0a0a0f";
 
-  useEffect(() => {
+  // Detect Claude Code from live paneInfo (WebSocket) or session data fallback
+  const isClaudeCode = liveIsClaudeCode ?? currentSession?.panes[paneIdx]?.isClaudeCode ?? false;
+
+  const recentSkills = useStore((s) => s.recentSkills);
+  const addRecentSkill = useStore((s) => s.addRecentSkill);
+
+  const refreshSessions = useCallback(() => {
     if (!device) return;
     fetchSessions(device).then((data) => {
       setSessions(data);
@@ -154,6 +229,8 @@ export default function TerminalScreen() {
       }
     }).catch(() => {});
   }, [device, targetSessionId]);
+
+  useEffect(() => { refreshSessions(); }, [refreshSessions]);
 
   // Hide native header — we render our own
   useEffect(() => {
@@ -180,10 +257,14 @@ export default function TerminalScreen() {
     const showSub = Keyboard.addListener("keyboardDidShow", () => {
       setKeyboardVisible(true);
       if (activePage === 2) goToPage(1);
+      Animated.spring(inputExpandAnim, { toValue: 1, useNativeDriver: false, tension: 120, friction: 14 }).start();
     });
-    const hideSub = Keyboard.addListener("keyboardDidHide", () => setKeyboardVisible(false));
+    const hideSub = Keyboard.addListener("keyboardDidHide", () => {
+      setKeyboardVisible(false);
+      Animated.spring(inputExpandAnim, { toValue: 0, useNativeDriver: false, tension: 120, friction: 14 }).start();
+    });
     return () => { showSub.remove(); hideSub.remove(); };
-  }, [activePage, goToPage]);
+  }, [activePage, goToPage, inputExpandAnim]);
 
   // Connect to terminal when session/pane changes AND webview is ready
   const reconnect = useCallback(() => {
@@ -210,6 +291,19 @@ export default function TerminalScreen() {
     return () => sub.remove();
   }, [initialized, reconnect]);
 
+  // Poll to detect process changes (e.g. launching/exiting claude)
+  useEffect(() => {
+    if (!connected || !device || !currentSession) return;
+    const interval = setInterval(() => {
+      fetchSessions(device).then((data) => {
+        const session = data.find((s) => s.id === currentSession.id);
+        const pane = session?.panes[paneIdx];
+        if (pane) setLiveIsClaudeCode(!!pane.isClaudeCode);
+      }).catch(() => {});
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [connected, device, currentSession?.id, paneIdx]);
+
   const handleWebViewMessage = useCallback((event: { nativeEvent: { data: string } }) => {
     try {
       const msg = JSON.parse(event.nativeEvent.data);
@@ -221,6 +315,9 @@ export default function TerminalScreen() {
           // Auto-reconnect after unexpected disconnect (app backgrounded, network blip)
           setTimeout(() => reconnect(), 500);
         }
+      }
+      if (msg.type === "paneInfo") {
+        setLiveIsClaudeCode(!!msg.isClaudeCode);
       }
       if (msg.type === "selectionReady") {
         if (msg.text) setSelectionText(msg.text);
@@ -298,6 +395,7 @@ export default function TerminalScreen() {
       const nextPane = (paneIdx + direction + currentSession.panes.length) % currentSession.panes.length;
       if (nextPane === paneIdx) return;
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      setLiveIsClaudeCode(null); // reset — paneInfo will arrive on reconnect
       setPaneIdx(nextPane);
     },
     [paneIdx, currentSession]
@@ -690,6 +788,7 @@ export default function TerminalScreen() {
                 style={styles.commandItem}
                 onPress={() => {
                   sendRaw(c.cmd + "\r");
+                  if (c.cmd === "cc") setLiveIsClaudeCode(true);
                   goToPage(c.toPage);
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 }}
@@ -708,32 +807,51 @@ export default function TerminalScreen() {
 
           {/* Physical 2: Text Input (default) */}
           <View style={[styles.inputPage, { width: barWidth }]}>
-            <Pressable
-              style={styles.actionBubble}
-              onPress={() => { sendRaw("\x1b"); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
-            >
-              <Text style={styles.actionBubbleIcon}>{"✕"}</Text>
-            </Pressable>
-            <Pressable
-              style={styles.actionBubble}
-              onPress={async () => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                const result = await ImagePicker.launchImageLibraryAsync({
-                  mediaTypes: ["images"],
-                  quality: 1,
-                });
-                if (result.canceled || !result.assets[0]) return;
-                const asset = result.assets[0];
-                const filename = asset.fileName ?? `photo.${asset.mimeType?.split("/")[1] ?? "png"}`;
-                const mimeType = asset.mimeType ?? "image/png";
-                try {
-                  const remotePath = await uploadFile(device!, asset.uri, filename, mimeType);
-                  sendRaw(remotePath);
-                } catch {}
-              }}
-            >
-              <Text style={styles.actionBubbleIcon}>{"📎"}</Text>
-            </Pressable>
+            <Animated.View style={[styles.inputBubbles, {
+              width: inputExpandAnim.interpolate({ inputRange: [0, 1], outputRange: [isClaudeCode ? 120 : 42, 0] }),
+              opacity: inputExpandAnim.interpolate({ inputRange: [0, 0.5], outputRange: [1, 0], extrapolate: "clamp" }),
+              marginRight: inputExpandAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -6] }),
+            }]}>
+              {isClaudeCode && (
+                <Pressable
+                  style={styles.actionBubble}
+                  onPress={() => { sendRaw("\x1b"); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
+                >
+                  <Text style={styles.actionBubbleIcon}>{"✕"}</Text>
+                </Pressable>
+              )}
+              <Pressable
+                style={styles.actionBubble}
+                onPress={async () => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  const result = await ImagePicker.launchImageLibraryAsync({
+                    mediaTypes: ["images"],
+                    quality: 1,
+                  });
+                  if (result.canceled || !result.assets[0]) return;
+                  const asset = result.assets[0];
+                  const filename = asset.fileName ?? `photo.${asset.mimeType?.split("/")[1] ?? "png"}`;
+                  const mimeType = asset.mimeType ?? "image/png";
+                  try {
+                    const remotePath = await uploadFile(device!, asset.uri, filename, mimeType);
+                    sendRaw(remotePath);
+                  } catch {}
+                }}
+              >
+                <Text style={styles.actionBubbleIcon}>{"📎"}</Text>
+              </Pressable>
+              {isClaudeCode && (
+                <Pressable
+                  style={[styles.actionBubble, { backgroundColor: tabColor + "20" }]}
+                  onPress={() => {
+                    setSkillPaletteVisible(true);
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }}
+                >
+                  <Text style={[styles.actionBubbleIcon, { color: "#ccc", fontWeight: "700", fontSize: 20 }]}>/</Text>
+                </Pressable>
+              )}
+            </Animated.View>
             <Pressable style={styles.inputWrap} onPress={() => inputRef.current?.focus()}>
               <BlurView intensity={40} tint="dark" style={styles.inputBlur}>
                 <View style={[styles.inputBorder, { borderColor: tabColor + "40" }]}>
@@ -803,6 +921,7 @@ export default function TerminalScreen() {
                 style={styles.commandItem}
                 onPress={() => {
                   sendRaw(c.cmd + "\r");
+                  if (c.cmd === "cc") setLiveIsClaudeCode(true);
                   goToPage(c.toPage);
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 }}
@@ -820,6 +939,133 @@ export default function TerminalScreen() {
           </View>
         </ScrollView>
       </View>
+
+      {/* Skill palette modal */}
+      <Modal
+        visible={skillPaletteVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSkillPaletteVisible(false)}
+      >
+        <View style={skillStyles.modalContainer}>
+          <Pressable style={skillStyles.backdrop} onPress={() => setSkillPaletteVisible(false)} />
+          <View style={[skillStyles.sheet, { height: Dimensions.get("window").height * 0.65 }]}>
+            <BlurView intensity={80} tint="dark" style={StyleSheet.absoluteFill} />
+            <View style={skillStyles.sheetInner}>
+              {/* Drag handle */}
+              <View style={skillStyles.handleRow}>
+                <View style={skillStyles.handle} />
+              </View>
+
+              {/* Header */}
+              <View style={skillStyles.headerRow}>
+                <Text style={skillStyles.sheetTitle}>Skills</Text>
+                <Pressable onPress={() => setSkillPaletteVisible(false)} hitSlop={12}>
+                  <Text style={skillStyles.closeBtn}>Done</Text>
+                </Pressable>
+              </View>
+
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="always"
+                style={skillStyles.scrollArea}
+                contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 20) + 16 }}
+              >
+                {/* Recents row */}
+                {recentSkills.length > 0 && (
+                  <View style={skillStyles.recentsSection}>
+                    <Text style={skillStyles.sectionLabel}>Recent</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="always">
+                      <View style={skillStyles.recentsRow}>
+                        {recentSkills.map((name) => {
+                          const skill = SKILLS.find((s) => s.name === name);
+                          if (!skill) return null;
+                          const catColor = CATEGORY_COLORS[skill.category];
+                          return (
+                            <Pressable
+                              key={name}
+                              style={({ pressed }) => [
+                                skillStyles.recentChip,
+                                pressed && { backgroundColor: tabColor + "25" },
+                              ]}
+                              onPress={() => {
+                                if (skill.needsArgs) {
+                                  setInputText(`/${skill.name} `);
+                                  setSkillPaletteVisible(false);
+                                  setTimeout(() => inputRef.current?.focus(), 100);
+                                } else {
+                                  sendRaw(`/${skill.name}\r`);
+                                  setSkillPaletteVisible(false);
+                                }
+                                addRecentSkill(skill.name);
+                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                              }}
+                            >
+                              <View style={[skillStyles.recentDot, { backgroundColor: catColor }]} />
+                              <Text style={skillStyles.recentLabel}>{skill.icon} {skill.label}</Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    </ScrollView>
+                  </View>
+                )}
+
+                {/* Category rows — Netflix-style horizontal carousels */}
+                {SKILLS_BY_CATEGORY.map(({ category, skills }) => (
+                  <View key={category} style={skillStyles.categorySection}>
+                    <Text style={[skillStyles.sectionLabel, { color: CATEGORY_COLORS[category] }]}>
+                      {CATEGORY_LABELS[category]}
+                    </Text>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      keyboardShouldPersistTaps="always"
+                      contentContainerStyle={skillStyles.skillRow}
+                    >
+                      {skills.map((skill) => {
+                        const catColor = CATEGORY_COLORS[skill.category];
+                        return (
+                          <Pressable
+                            key={skill.name}
+                            style={({ pressed }) => [
+                              skillStyles.skillCard,
+                              { borderLeftColor: catColor, backgroundColor: catColor + "18" },
+                              pressed && { transform: [{ scale: 0.95 }], backgroundColor: catColor + "30" },
+                            ]}
+                            onPress={() => {
+                              if (skill.needsArgs) {
+                                setInputText(`/${skill.name} `);
+                                setSkillPaletteVisible(false);
+                                setTimeout(() => inputRef.current?.focus(), 100);
+                              } else {
+                                sendRaw(`/${skill.name}\r`);
+                                setSkillPaletteVisible(false);
+                              }
+                              addRecentSkill(skill.name);
+                              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            }}
+                          >
+                            <Text style={skillStyles.skillIcon}>{skill.icon}</Text>
+                            <View style={skillStyles.skillTextCol}>
+                              <Text style={skillStyles.skillLabel} numberOfLines={1}>{skill.label}</Text>
+                              <Text style={skillStyles.skillDesc} numberOfLines={1}>{skill.description}</Text>
+                            </View>
+                            {skill.needsArgs && (
+                              <Text style={skillStyles.argsHint}>…</Text>
+                            )}
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                ))}
+
+              </ScrollView>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Pane grid overlay */}
       {currentSession && (
@@ -1005,6 +1251,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
+  inputBubbles: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    overflow: "hidden",
+  },
   actionsPage: {
     flexDirection: "row",
     alignItems: "center",
@@ -1139,5 +1391,140 @@ const styles = StyleSheet.create({
     color: "#666",
     fontSize: 10,
     fontWeight: "500",
+  },
+});
+
+const skillStyles = StyleSheet.create({
+  modalContainer: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.4)",
+  },
+  sheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    overflow: "hidden",
+  },
+  sheetInner: {
+    flex: 1,
+    backgroundColor: "rgba(20,20,28,0.85)",
+  },
+  handleRow: {
+    alignItems: "center",
+    paddingTop: 10,
+    paddingBottom: 4,
+  },
+  handle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "rgba(255,255,255,0.25)",
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+  },
+  sheetTitle: {
+    color: "#e4e4e8",
+    fontSize: 18,
+    fontWeight: "700",
+    fontFamily: Platform.OS === "ios" ? "SF Mono" : "monospace",
+  },
+  closeBtn: {
+    color: "#888",
+    fontSize: 15,
+    fontWeight: "500",
+  },
+  scrollArea: {
+    flex: 1,
+  },
+  recentsSection: {
+    paddingHorizontal: 20,
+    paddingBottom: 16,
+  },
+  recentsRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingTop: 6,
+  },
+  recentChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.12)",
+  },
+  recentDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  recentLabel: {
+    color: "#ccc",
+    fontSize: 13,
+    fontFamily: Platform.OS === "ios" ? "SF Mono" : "monospace",
+    fontWeight: "500",
+  },
+  sectionLabel: {
+    color: "#666",
+    fontSize: 11,
+    fontWeight: "700",
+    fontFamily: Platform.OS === "ios" ? "SF Mono" : "monospace",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    paddingBottom: 2,
+    paddingHorizontal: 20,
+  },
+  categorySection: {
+    paddingBottom: 14,
+  },
+  skillRow: {
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingTop: 6,
+  },
+  skillCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderLeftWidth: 3,
+    minWidth: 160,
+  },
+  skillIcon: {
+    fontSize: 20,
+  },
+  skillTextCol: {
+    flexShrink: 1,
+    gap: 1,
+  },
+  skillLabel: {
+    color: "#ccc",
+    fontSize: 13,
+    fontFamily: Platform.OS === "ios" ? "SF Mono" : "monospace",
+    fontWeight: "600",
+  },
+  skillDesc: {
+    color: "rgba(255,255,255,0.35)",
+    fontSize: 11,
+    fontFamily: Platform.OS === "ios" ? "SF Mono" : "monospace",
+  },
+  argsHint: {
+    color: "rgba(255,255,255,0.25)",
+    fontSize: 14,
+    fontWeight: "700",
+    marginLeft: 2,
   },
 });
