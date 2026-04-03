@@ -214,13 +214,11 @@ export default function TerminalScreen() {
         }
       }
       if (msg.type === "swipe") {
-        if (msg.direction === "up") switchSession(1);
-        else if (msg.direction === "down") switchSession(-1);
-        else if (msg.direction === "left") switchPane(1);
+        if (msg.direction === "left") switchPane(1);
         else if (msg.direction === "right") switchPane(-1);
       }
     } catch {}
-  }, [switchSession, switchPane]);
+  }, [switchPane]);
 
   const sendRaw = useCallback((data: string) => {
     webViewRef.current?.postMessage(JSON.stringify({ type: "input", data }));
@@ -275,21 +273,6 @@ export default function TerminalScreen() {
     setActivePage(logical);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, [barWidth]);
-
-  const switchSession = useCallback(
-    (direction: number) => {
-      if (sessions.length === 0) return;
-      const nextIdx = (sessionIdx + direction + sessions.length) % sessions.length;
-      if (nextIdx === sessionIdx) return;
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      setPaneIdx(0);
-      setSessionIdx(nextIdx);
-      if (device) {
-        fetchSessions(device).then(setSessions).catch(() => {});
-      }
-    },
-    [sessionIdx, sessions.length, device]
-  );
 
   const switchPane = useCallback(
     (direction: number) => {
@@ -407,16 +390,12 @@ export default function TerminalScreen() {
     const elapsed = Date.now() - t.time;
 
     // Swipe detection (single-finger only)
-    // Vertical = switch session, Horizontal = switch pane
+    // Vertical swipe down = dismiss keyboard, Horizontal = switch pane
     if (t.maxTouches < 2) {
       if (Math.abs(dy) > Math.abs(dx)) {
-        if (Math.abs(dy) > 30) {
+        if (dy > 30 && keyboardVisible) {
           t.triggered = true;
-          if (dy > 0 && keyboardVisible) {
-            Keyboard.dismiss();
-          } else {
-            dy < 0 ? switchSession(1) : switchSession(-1);
-          }
+          Keyboard.dismiss();
           return;
         }
       } else {
@@ -438,7 +417,7 @@ export default function TerminalScreen() {
         }
       }, 0);
     }
-  }, [switchSession, switchPane, keyboardVisible]);
+  }, [switchPane, keyboardVisible]);
 
   if (!device) {
     return (
@@ -466,15 +445,9 @@ export default function TerminalScreen() {
             {currentSession?.tabTitle ?? "Terminal"}
           </Text>
         </View>
-        <View style={styles.headerRight}>
-          {sessions.length > 1 && (
-            <View style={styles.headerCounter}>
-              <Text style={[styles.headerCaret, sessionIdx === 0 && styles.headerCaretDim]}>{"▲"}</Text>
-              <Text style={styles.headerCountText}>{sessionIdx + 1}/{sessions.length}</Text>
-              <Text style={[styles.headerCaret, sessionIdx === sessions.length - 1 && styles.headerCaretDim]}>{"▼"}</Text>
-            </View>
-          )}
-        </View>
+        <Pressable style={styles.headerRight} onPress={() => router.dismissTo(`/${deviceId}`)} hitSlop={12}>
+          <Text style={styles.headerSessionsLabel}>Sessions</Text>
+        </Pressable>
       </View>
 
       {/* Indicator bar: pane dots + pane count, centered — always visible, tappable to open grid */}
@@ -837,22 +810,9 @@ const styles = StyleSheet.create({
     minWidth: 32,
     justifyContent: "flex-end",
   },
-  headerCounter: {
-    flexDirection: "column",
-    alignItems: "center",
-  },
-  headerCaret: {
-    color: "#555",
-    fontSize: 8,
-    lineHeight: 10,
-  },
-  headerCaretDim: {
-    opacity: 0.25,
-  },
-  headerCountText: {
+  headerSessionsLabel: {
     color: "#888",
-    fontSize: 13,
-    lineHeight: 16,
+    fontSize: 15,
   },
 
   // Indicator bar (pane navigation)
