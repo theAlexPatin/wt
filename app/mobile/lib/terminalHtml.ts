@@ -59,6 +59,7 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
           cursorStyle: "bar",
           fontSize: 11,
           fontFamily: '"SF Mono", Menlo, "DejaVu Sans Mono", monospace',
+          scrollback: 10000,
           theme: {
             background: bgColor,
             foreground: "#e4e4e8",
@@ -284,10 +285,8 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
             if (term) term.clearSelection();
           }
           else if (msg.type === "scroll") {
-            // Forward to server — handled via tmux copy-mode for smooth scrolling
-            if (ws && ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: "scroll", lines: msg.lines }));
-            }
+            // Scroll xterm.js viewport directly — no server round-trip
+            if (term) term.scrollLines(-msg.lines);
           }
         } catch(e) {}
       }
