@@ -12,6 +12,7 @@ import {
   ScrollView,
   Dimensions,
   Animated,
+  AppState,
 } from "react-native";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { WebView } from "react-native-webview";
@@ -185,7 +186,7 @@ export default function TerminalScreen() {
   }, [activePage, goToPage]);
 
   // Connect to terminal when session/pane changes AND webview is ready
-  useEffect(() => {
+  const reconnect = useCallback(() => {
     if (!device || !currentSession || !webViewReady) return;
     const pane = currentSession.panes[paneIdx];
     if (!pane) return;
@@ -197,14 +198,30 @@ export default function TerminalScreen() {
     });
     webViewRef.current?.postMessage(msg);
     if (!initialized) setInitialized(true);
-  }, [device, currentSession, paneIdx, webViewReady]);
+  }, [device, currentSession, paneIdx, webViewReady, initialized]);
+
+  useEffect(() => { reconnect(); }, [reconnect]);
+
+  // Auto-reconnect when app returns from background
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active" && initialized) reconnect();
+    });
+    return () => sub.remove();
+  }, [initialized, reconnect]);
 
   const handleWebViewMessage = useCallback((event: { nativeEvent: { data: string } }) => {
     try {
       const msg = JSON.parse(event.nativeEvent.data);
       if (msg.type === "ready") setWebViewReady(true);
       if (msg.type === "connected") setConnected(true);
-      if (msg.type === "disconnected") setConnected(false);
+      if (msg.type === "disconnected") {
+        setConnected(false);
+        if (msg.unexpected) {
+          // Auto-reconnect after unexpected disconnect (app backgrounded, network blip)
+          setTimeout(() => reconnect(), 500);
+        }
+      }
       if (msg.type === "selection") {
         if (msg.text) {
           Clipboard.setStringAsync(msg.text);

@@ -86,6 +86,7 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
       }
 
       function connect(url) {
+        intentionalDisconnect = false;
         ws = new WebSocket(url);
         var scrollTimer = null;
         var initialLoad = true;
@@ -197,11 +198,15 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
             }
           }
         };
-        ws.onclose = function() { notifyRN({ type: "disconnected" }); };
+        ws.onclose = function() {
+          notifyRN({ type: "disconnected", unexpected: !intentionalDisconnect });
+          intentionalDisconnect = false;
+        };
         ws.onerror = function() { notifyRN({ type: "error" }); };
       }
 
-      function disconnect() { if (ws) { ws.close(); ws = null; } }
+      var intentionalDisconnect = false;
+      function disconnect() { intentionalDisconnect = true; if (ws) { ws.close(); ws = null; } }
 
       function sendResize() {
         if (term && ws && ws.readyState === WebSocket.OPEN) {
