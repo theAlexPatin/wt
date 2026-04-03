@@ -49,9 +49,17 @@
     "android": {
       "permissions": [
         "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO"
       ],
       "package": "com.owner.witcompanion"
+    },
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/a671143b-7d4c-4f99-ab53-b24634e0c7e1"
     }
   }
 }

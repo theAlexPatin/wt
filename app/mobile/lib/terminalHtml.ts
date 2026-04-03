@@ -285,8 +285,10 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
             if (term) term.clearSelection();
           }
           else if (msg.type === "scroll") {
-            // Scroll xterm.js viewport directly — no server round-trip
-            if (term) term.scrollLines(-msg.lines);
+            // Send scroll to server — tmux copy-mode has the full scrollback
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: "scroll", lines: msg.lines }));
+            }
           }
         } catch(e) {}
       }

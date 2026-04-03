@@ -33,24 +33,18 @@ const MAX_INPUT_LINES = 4;
 const MAX_INPUT_HEIGHT = LINE_HEIGHT * MAX_INPUT_LINES;
 const SCREEN_WIDTH = Dimensions.get("window").width;
 
-const ACTION_ROW_1 = [
+const HOTKEYS_ROW_1 = [
+  { label: "ESC", data: "\x1b" },
   { label: "Tab", data: "\t" },
-  { label: "^D", data: "\x04" },
-  { label: "^Z", data: "\x1a" },
   { label: "^U", data: "\x15" },
-  { label: "^W", data: "\x17" },
-  { label: "↑", data: "\x1b[A", repeat: true },
   { label: "⌫", data: "\x7f", repeat: true },
 ];
 
-const ACTION_ROW_2 = [
-  { label: "■", data: "\x03" },
-  { label: "^E", data: "\x05" },
-  { label: "^K", data: "\x0b" },
-  { label: "^R", data: "\x12" },
-  { label: "←", data: "\x1b[D", repeat: true },
-  { label: "↓", data: "\x1b[B", repeat: true },
-  { label: "→", data: "\x1b[C", repeat: true },
+const HOTKEYS_ROW_2 = [
+  { label: "^C", data: "\x03" },
+  { label: "^Z", data: "\x1a" },
+  { label: "^D", data: "\x04" },
+  { label: "⏎", data: "\r" },
 ];
 
 const COMMANDS = [
@@ -65,8 +59,8 @@ const COMMANDS = [
 const REPEAT_DELAY = 400;
 const REPEAT_INTERVAL = 80;
 
-function ActionKey({ label, data, repeat, tabColor, sendRaw }: {
-  label: string; data: string; repeat?: boolean; tabColor: string;
+function ActionKey({ label, data, repeat, arrow, tabColor, sendRaw }: {
+  label: string; data: string; repeat?: boolean; arrow?: boolean; tabColor: string;
   sendRaw: (data: string) => void;
 }) {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -96,6 +90,7 @@ function ActionKey({ label, data, repeat, tabColor, sendRaw }: {
     <Pressable
       style={({ pressed }) => [
         styles.actionKey,
+        arrow && styles.actionKeyArrow,
         { borderColor: tabColor + "30" },
         pressed && { backgroundColor: tabColor + "25" },
       ]}
@@ -138,6 +133,12 @@ export default function TerminalScreen() {
   const [selectionText, setSelectionText] = useState<string | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialScrollRef = useRef(false);
+  const swipeX = useRef(new Animated.Value(0)).current;
+  const swipeOpacity = swipeX.interpolate({
+    inputRange: [-SCREEN_WIDTH, -SCREEN_WIDTH * 0.5, 0, SCREEN_WIDTH * 0.5, SCREEN_WIDTH],
+    outputRange: [0, 0.9, 1, 0.9, 0],
+    extrapolate: 'clamp',
+  });
 
   const currentSession = sessions[sessionIdx];
   const tabColor = currentSession?.tabColor ?? "#555";
@@ -313,6 +314,7 @@ export default function TerminalScreen() {
     lastMoveTime: 0, lastMoveY: 0, velocity: 0,
     scrollPending: 0, scrollRaf: 0,
     selecting: false,
+    axis: null as "h" | "v" | null, // directional lock: null until past dead zone
   });
 
   const flushScroll = useCallback(() => {
@@ -327,6 +329,8 @@ export default function TerminalScreen() {
   }, []);
 
   const onOverlayTouchStart = useCallback((e: any) => {
+    swipeX.stopAnimation();
+    swipeX.setValue(0);
     const touches = e.nativeEvent.touches;
     const count = Array.isArray(touches) ? touches.length : 1;
     const now = Date.now();
@@ -337,6 +341,7 @@ export default function TerminalScreen() {
       lastMoveTime: now, lastMoveY: e.nativeEvent.pageY, velocity: 0,
       scrollPending: 0, scrollRaf: 0,
       selecting: false,
+      axis: null,
     };
     // Dismiss selection popup if visible
     if (selectionText) {
@@ -384,31 +389,45 @@ export default function TerminalScreen() {
       return;
     }
 
-    // 1-finger vertical drag → scroll terminal
-    const now = Date.now();
-    const dy = e.nativeEvent.pageY - t.y;
-    const dt = now - t.lastMoveTime;
+    const totalDx = Math.abs(e.nativeEvent.pageX - t.x);
+    const totalDy = Math.abs(e.nativeEvent.pageY - t.y);
 
-    if (dt > 0) {
-      const instantV = Math.abs(dy) / dt;
-      t.velocity = t.velocity * 0.6 + instantV * 0.4;
+    // Determine directional lock once past dead zone (15px)
+    if (!t.axis && (totalDx > 15 || totalDy > 15)) {
+      t.axis = totalDy >= totalDx ? "v" : "h";
+      t.triggered = true; // commit to gesture — prevents tap
     }
 
-    const multiplier = 1 + Math.min(t.velocity * 4, 4);
-    t.scrollAccum += dy * multiplier;
-    t.y = e.nativeEvent.pageY;
-    t.lastMoveTime = now;
-    t.lastMoveY = e.nativeEvent.pageY;
+    // Vertical axis locked → scroll terminal
+    if (t.axis === "v") {
+      const now = Date.now();
+      const dy = e.nativeEvent.pageY - t.lastMoveY;
+      const dt = now - t.lastMoveTime;
 
-    const lines = Math.trunc(t.scrollAccum / 12);
-    if (lines !== 0) {
-      t.scrollAccum -= lines * 12;
-      t.scrollPending += lines;
-      t.lastScrollTime = now;
-      t.triggered = true;
-      if (!t.scrollRaf) {
-        t.scrollRaf = requestAnimationFrame(flushScroll) as unknown as number;
+      if (dt > 0) {
+        const instantV = Math.abs(dy) / dt;
+        t.velocity = t.velocity * 0.6 + instantV * 0.4;
       }
+
+      const multiplier = 1 + Math.min(t.velocity * 4, 4);
+      t.scrollAccum += dy * multiplier;
+      t.lastMoveTime = now;
+      t.lastMoveY = e.nativeEvent.pageY;
+
+      const lines = Math.trunc(t.scrollAccum / 12);
+      if (lines !== 0) {
+        t.scrollAccum -= lines * 12;
+        t.lastScrollTime = now;
+        webViewRef.current?.postMessage(
+          JSON.stringify({ type: "scroll", lines })
+        );
+      }
+    }
+
+    // Horizontal axis: track finger for swipe animation
+    if (t.axis === "h") {
+      const dx = e.nativeEvent.pageX - t.x;
+      swipeX.setValue(dx);
     }
   }, [flushScroll]);
 
@@ -424,23 +443,43 @@ export default function TerminalScreen() {
       webViewRef.current?.postMessage(JSON.stringify({ type: "selectEnd" }));
       return;
     }
+    // Horizontal swipe → animated pane switch
+    if (t.axis === "h" && t.maxTouches < 2) {
+      const dx = e.nativeEvent.pageX - t.x;
+      if (Math.abs(dx) > 30 && currentSession && currentSession.panes.length > 1) {
+        const direction = dx < 0 ? 1 : -1;
+        // Slide old content off-screen, then switch pane while hidden
+        Animated.timing(swipeX, {
+          toValue: dx < 0 ? -SCREEN_WIDTH : SCREEN_WIDTH,
+          duration: 150,
+          useNativeDriver: false,
+        }).start(() => {
+          switchPane(direction);
+          swipeX.setValue(dx < 0 ? SCREEN_WIDTH : -SCREEN_WIDTH);
+          Animated.spring(swipeX, {
+            toValue: 0,
+            useNativeDriver: false,
+            tension: 80,
+            friction: 12,
+          }).start();
+        });
+      } else {
+        // Snap back
+        Animated.spring(swipeX, {
+          toValue: 0,
+          useNativeDriver: false,
+          tension: 120,
+          friction: 10,
+        }).start();
+      }
+      return;
+    }
+
     if (t.triggered) return;
 
     const dx = e.nativeEvent.pageX - t.x;
     const dy = e.nativeEvent.pageY - t.y;
     const elapsed = Date.now() - t.time;
-
-    // Swipe detection (single-finger only)
-    // Horizontal swipe = switch pane
-    if (t.maxTouches < 2) {
-      if (Math.abs(dx) > Math.abs(dy)) {
-        if (Math.abs(dx) > 30) {
-          t.triggered = true;
-          dx < 0 ? switchPane(1) : switchPane(-1);
-          return;
-        }
-      }
-    }
 
     // Tap detection: small movement, short duration, not after scroll
     if (Math.abs(dx) < 10 && Math.abs(dy) < 10 && elapsed < 400 && Date.now() - t.lastScrollTime > 300) {
@@ -452,7 +491,7 @@ export default function TerminalScreen() {
         }
       }, 0);
     }
-  }, [switchPane, keyboardVisible]);
+  }, [switchPane, keyboardVisible, currentSession]);
 
   if (!device) {
     return (
@@ -538,7 +577,10 @@ export default function TerminalScreen() {
       )}
 
       {/* Terminal WebView with full-screen swipe overlay */}
-      <View style={styles.terminalWrap}>
+      <Animated.View style={[styles.terminalWrap, {
+        transform: [{ translateX: swipeX }],
+        opacity: swipeOpacity,
+      }]}>
         <WebView
           ref={webViewRef}
           source={{ html: TERMINAL_HTML }}
@@ -577,7 +619,7 @@ export default function TerminalScreen() {
             </Pressable>
           </View>
         )}
-      </View>
+      </Animated.View>
 
       {/* Swipeable input bar: commands <-> text input <-> keystrokes (infinite cycle) */}
       <View style={[styles.inputContainer, { paddingBottom: keyboardVisible ? 4 : Math.max(insets.bottom, 8) }]}>
@@ -617,15 +659,25 @@ export default function TerminalScreen() {
               <Text style={styles.actionBubbleIcon}>{"⌨"}</Text>
             </Pressable>
             <View style={styles.actionsGrid}>
-              <View style={styles.actionsRow}>
-                {ACTION_ROW_1.map((a) => (
-                  <ActionKey key={a.label} {...a} tabColor={tabColor} sendRaw={sendRaw} />
-                ))}
+              <View style={styles.actionsLeft}>
+                <View style={styles.actionsRow}>
+                  {HOTKEYS_ROW_1.map((a) => (
+                    <ActionKey key={a.label} {...a} tabColor={tabColor} sendRaw={sendRaw} />
+                  ))}
+                </View>
+                <View style={styles.actionsRow}>
+                  {HOTKEYS_ROW_2.map((a) => (
+                    <ActionKey key={a.label} {...a} tabColor={tabColor} sendRaw={sendRaw} />
+                  ))}
+                </View>
               </View>
-              <View style={styles.actionsRow}>
-                {ACTION_ROW_2.map((a) => (
-                  <ActionKey key={a.label} {...a} tabColor={tabColor} sendRaw={sendRaw} />
-                ))}
+              <View style={styles.arrowCluster}>
+                <ActionKey label="↑" data={"\x1b[A"} repeat arrow tabColor={tabColor} sendRaw={sendRaw} />
+                <View style={styles.arrowBottomRow}>
+                  <ActionKey label="←" data={"\x1b[D"} repeat arrow tabColor={tabColor} sendRaw={sendRaw} />
+                  <ActionKey label="↓" data={"\x1b[B"} repeat arrow tabColor={tabColor} sendRaw={sendRaw} />
+                  <ActionKey label="→" data={"\x1b[C"} repeat arrow tabColor={tabColor} sendRaw={sendRaw} />
+                </View>
               </View>
             </View>
           </View>
@@ -720,15 +772,25 @@ export default function TerminalScreen() {
               <Text style={styles.actionBubbleIcon}>{"⌨"}</Text>
             </Pressable>
             <View style={styles.actionsGrid}>
-              <View style={styles.actionsRow}>
-                {ACTION_ROW_1.map((a) => (
-                  <ActionKey key={a.label} {...a} tabColor={tabColor} sendRaw={sendRaw} />
-                ))}
+              <View style={styles.actionsLeft}>
+                <View style={styles.actionsRow}>
+                  {HOTKEYS_ROW_1.map((a) => (
+                    <ActionKey key={a.label} {...a} tabColor={tabColor} sendRaw={sendRaw} />
+                  ))}
+                </View>
+                <View style={styles.actionsRow}>
+                  {HOTKEYS_ROW_2.map((a) => (
+                    <ActionKey key={a.label} {...a} tabColor={tabColor} sendRaw={sendRaw} />
+                  ))}
+                </View>
               </View>
-              <View style={styles.actionsRow}>
-                {ACTION_ROW_2.map((a) => (
-                  <ActionKey key={a.label} {...a} tabColor={tabColor} sendRaw={sendRaw} />
-                ))}
+              <View style={styles.arrowCluster}>
+                <ActionKey label="↑" data={"\x1b[A"} repeat arrow tabColor={tabColor} sendRaw={sendRaw} />
+                <View style={styles.arrowBottomRow}>
+                  <ActionKey label="←" data={"\x1b[D"} repeat arrow tabColor={tabColor} sendRaw={sendRaw} />
+                  <ActionKey label="↓" data={"\x1b[B"} repeat arrow tabColor={tabColor} sendRaw={sendRaw} />
+                  <ActionKey label="→" data={"\x1b[C"} repeat arrow tabColor={tabColor} sendRaw={sendRaw} />
+                </View>
               </View>
             </View>
           </View>
@@ -950,6 +1012,20 @@ const styles = StyleSheet.create({
   },
   actionsGrid: {
     flex: 1,
+    flexDirection: "row",
+    gap: 8,
+  },
+  actionsLeft: {
+    flex: 1,
+    gap: 5,
+  },
+  arrowCluster: {
+    gap: 5,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  arrowBottomRow: {
+    flexDirection: "row",
     gap: 5,
   },
   actionsRow: {
@@ -965,6 +1041,10 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.15)",
     alignItems: "center",
     justifyContent: "center",
+  },
+  actionKeyArrow: {
+    flex: 0,
+    width: 42,
   },
   actionKeyLabel: {
     color: "#ccc",
