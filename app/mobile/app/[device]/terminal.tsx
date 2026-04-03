@@ -201,7 +201,8 @@ export default function TerminalScreen() {
   const [selectionText, setSelectionText] = useState<string | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialScrollRef = useRef(false);
-  const inputExpandAnim = useRef(new Animated.Value(0)).current; // 0=collapsed bubbles visible, 1=expanded full-width
+  const inputExpandAnim = useRef(new Animated.Value(0)).current; // 0=bubbles visible, 1=bubbles collapsed
+  const bubblesForced = useRef(false); // true when user manually re-expanded during keyboard
   const swipeX = useRef(new Animated.Value(0)).current;
   const swipeOpacity = swipeX.interpolate({
     inputRange: [-SCREEN_WIDTH, -SCREEN_WIDTH * 0.5, 0, SCREEN_WIDTH * 0.5, SCREEN_WIDTH],
@@ -257,10 +258,13 @@ export default function TerminalScreen() {
     const showSub = Keyboard.addListener("keyboardDidShow", () => {
       setKeyboardVisible(true);
       if (activePage === 2) goToPage(1);
-      Animated.spring(inputExpandAnim, { toValue: 1, useNativeDriver: false, tension: 120, friction: 14 }).start();
+      if (!bubblesForced.current) {
+        Animated.spring(inputExpandAnim, { toValue: 1, useNativeDriver: false, tension: 120, friction: 14 }).start();
+      }
     });
     const hideSub = Keyboard.addListener("keyboardDidHide", () => {
       setKeyboardVisible(false);
+      bubblesForced.current = false;
       Animated.spring(inputExpandAnim, { toValue: 0, useNativeDriver: false, tension: 120, friction: 14 }).start();
     });
     return () => { showSub.remove(); hideSub.remove(); };
@@ -851,6 +855,23 @@ export default function TerminalScreen() {
                   <Text style={[styles.actionBubbleIcon, { color: "#ccc", fontWeight: "700", fontSize: 20 }]}>/</Text>
                 </Pressable>
               )}
+            </Animated.View>
+            <Animated.View style={{
+              opacity: inputExpandAnim.interpolate({ inputRange: [0.5, 1], outputRange: [0, 1], extrapolate: "clamp" }),
+              width: inputExpandAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 36] }),
+              overflow: "hidden",
+            }}>
+              <Pressable
+                style={styles.actionBubble}
+                hitSlop={8}
+                onPress={() => {
+                  bubblesForced.current = true;
+                  Animated.spring(inputExpandAnim, { toValue: 0, useNativeDriver: false, tension: 120, friction: 14 }).start();
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+              >
+                <Text style={styles.actionBubbleIcon}>{"›"}</Text>
+              </Pressable>
             </Animated.View>
             <Pressable style={styles.inputWrap} onPress={() => inputRef.current?.focus()}>
               <BlurView intensity={40} tint="dark" style={styles.inputBlur}>
