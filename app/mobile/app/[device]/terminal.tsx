@@ -19,6 +19,7 @@ import { BlurView } from "expo-blur";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
+import * as Clipboard from "expo-clipboard";
 import { useStore } from "../../lib/store";
 import { fetchSessions, terminalWsUrl, uploadFile } from "../../lib/api";
 import { TERMINAL_HTML } from "../../lib/terminalHtml";
@@ -133,6 +134,9 @@ export default function TerminalScreen() {
   const [activePage, setActivePage] = useState(1); // logical: 0=commands, 1=input, 2=keystrokes
   const [barWidth, setBarWidth] = useState(SCREEN_WIDTH - 16);
   const [paneGridVisible, setPaneGridVisible] = useState(false);
+  const [selectMode, setSelectMode] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialScrollRef = useRef(false);
 
   const currentSession = sessions[sessionIdx];
@@ -201,6 +205,14 @@ export default function TerminalScreen() {
       if (msg.type === "ready") setWebViewReady(true);
       if (msg.type === "connected") setConnected(true);
       if (msg.type === "disconnected") setConnected(false);
+      if (msg.type === "selection") {
+        if (msg.text) {
+          Clipboard.setStringAsync(msg.text);
+          setCopied(true);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          setTimeout(() => setCopied(false), 1500);
+        }
+      }
       if (msg.type === "swipe") {
         if (msg.direction === "up") switchSession(1);
         else if (msg.direction === "down") switchSession(-1);
@@ -212,6 +224,24 @@ export default function TerminalScreen() {
 
   const sendRaw = useCallback((data: string) => {
     webViewRef.current?.postMessage(JSON.stringify({ type: "input", data }));
+  }, []);
+
+  const handleCopy = useCallback(() => {
+    webViewRef.current?.postMessage(JSON.stringify({ type: "getSelection" }));
+  }, []);
+
+  const handlePaste = useCallback(async () => {
+    const text = await Clipboard.getStringAsync();
+    if (text) {
+      sendRaw(text);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+  }, [sendRaw]);
+
+  const exitSelectMode = useCallback(() => {
+    setSelectMode(false);
+    setCopied(false);
+    webViewRef.current?.postMessage(JSON.stringify({ type: "clearSelection" }));
   }, []);
 
   const sendCommand = () => {
@@ -306,13 +336,35 @@ export default function TerminalScreen() {
       lastMoveTime: now, lastMoveY: e.nativeEvent.pageY, velocity: 0,
       scrollPending: 0, scrollRaf: 0,
     };
-  }, []);
+    // Long press detection: 500ms hold → enter selection mode
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+    longPressTimer.current = setTimeout(() => {
+      longPressTimer.current = null;
+      const t = touchRef.current;
+      if (!t.triggered && t.maxTouches < 2) {
+        t.triggered = true;
+        setSelectMode(true);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        if (keyboardVisible) Keyboard.dismiss();
+      }
+    }, 500);
+  }, [keyboardVisible]);
 
   const onOverlayTouchMove = useCallback((e: any) => {
     const t = touchRef.current;
     const touches = e.nativeEvent.touches;
     const count = Array.isArray(touches) ? touches.length : 1;
     if (count > t.maxTouches) t.maxTouches = count;
+
+    // Cancel long press if moved too far
+    if (longPressTimer.current) {
+      const dx = Math.abs(e.nativeEvent.pageX - t.x);
+      const dy = Math.abs(e.nativeEvent.pageY - t.y);
+      if (dx > 10 || dy > 10) {
+        clearTimeout(longPressTimer.current);
+        longPressTimer.current = null;
+      }
+    }
 
     if (t.maxTouches >= 2) {
       const now = Date.now();
@@ -343,6 +395,10 @@ export default function TerminalScreen() {
   }, [flushScroll]);
 
   const onOverlayTouchEnd = useCallback((e: any) => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
     const t = touchRef.current;
     if (t.triggered) return;
 
@@ -491,12 +547,36 @@ export default function TerminalScreen() {
           mixedContentMode="always"
           allowsInlineMediaPlayback
         />
-        <View
-          style={styles.swipeOverlay}
-          onTouchStart={onOverlayTouchStart}
-          onTouchMove={onOverlayTouchMove}
-          onTouchEnd={onOverlayTouchEnd}
-        />
+        {!selectMode && (
+          <View
+            style={styles.swipeOverlay}
+            onTouchStart={onOverlayTouchStart}
+            onTouchMove={onOverlayTouchMove}
+            onTouchEnd={onOverlayTouchEnd}
+          />
+        )}
+        {selectMode && (
+          <View style={[styles.selectToolbar, { backgroundColor: bgColor + "ee" }]}>
+            <Pressable
+              style={[styles.selectBtn, { borderColor: tabColor + "40" }]}
+              onPress={handleCopy}
+            >
+              <Text style={styles.selectBtnText}>{copied ? "Copied!" : "Copy"}</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.selectBtn, { borderColor: tabColor + "40" }]}
+              onPress={handlePaste}
+            >
+              <Text style={styles.selectBtnText}>Paste</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.selectBtn, { backgroundColor: tabColor, borderColor: tabColor }]}
+              onPress={exitSelectMode}
+            >
+              <Text style={[styles.selectBtnText, { color: "#fff" }]}>Done</Text>
+            </Pressable>
+          </View>
+        )}
       </View>
 
       {/* Swipeable input bar: commands <-> text input <-> keystrokes (infinite cycle) */}
@@ -825,6 +905,33 @@ const styles = StyleSheet.create({
     bottom: 0,
     zIndex: 10,
   },
+  // Selection mode toolbar
+  selectToolbar: {
+    position: "absolute",
+    bottom: 8,
+    left: 16,
+    right: 16,
+    flexDirection: "row",
+    gap: 8,
+    padding: 8,
+    borderRadius: 12,
+    zIndex: 20,
+  },
+  selectBtn: {
+    flex: 1,
+    height: 40,
+    borderRadius: 10,
+    borderWidth: 1,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  selectBtnText: {
+    color: "#ccc",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+
   // Input
   inputContainer: {
     paddingHorizontal: 8,

@@ -234,6 +234,12 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
             connect(msg.wsUrl);
           }
           else if (msg.type === "disconnect") disconnect();
+          else if (msg.type === "getSelection") {
+            notifyRN({ type: "selection", text: term ? term.getSelection() : "" });
+          }
+          else if (msg.type === "clearSelection") {
+            if (term) term.clearSelection();
+          }
           else if (msg.type === "scroll") {
             // Forward to server — handled via tmux copy-mode for smooth scrolling
             if (ws && ws.readyState === WebSocket.OPEN) {
