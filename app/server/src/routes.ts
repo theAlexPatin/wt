@@ -6,6 +6,7 @@ import { Expo, type ExpoPushMessage, type ExpoPushTicket } from "expo-server-sdk
 import { listSessions, listPanes, isTmuxRunning, createSession, killSession, renameSession, splitPane, killPane, capturePane, getSessionOption, createSessionInWorktree } from "./tmux";
 import { readWtConfig, parseConfigPath, listRepos, listWorktreesWithConfig, createWorktree } from "./worktrees";
 import { activeTerminals } from "./state";
+import { sendMacNotification } from "./macos-notify";
 
 const UPLOAD_DIR = "/tmp/wt-uploads";
 
@@ -263,8 +264,17 @@ app.post("/notify", async (c) => {
     return c.json({ error: "body is required" }, 400);
   }
 
+  // Always send a macOS desktop notification (non-intrusive banner)
+  sendMacNotification({
+    title: title || "Wit",
+    body,
+    session,
+    windowIndex,
+    paneIndex,
+  });
+
   // If someone is actively viewing this session via a WebSocket terminal
-  // connection, skip the notification — they're already looking at it
+  // connection, skip the mobile notification — they're already looking at it
   if (session && activeTerminals.has(session)) {
     return c.json({ ok: true, sent: 0, suppressed: true });
   }
