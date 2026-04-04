@@ -1,12 +1,13 @@
 import { execFile, execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
-import { resolve, dirname, join } from "node:path";
+import { resolve, join } from "node:path";
 import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
 
-// Custom terminal-notifier bundle with Wit icon baked in
-const WIT_NOTIFIER = resolve(dirname(fileURLToPath(import.meta.url)), "../notifier/Wit.app/Contents/MacOS/terminal-notifier");
+const HOME = process.env.HOME ?? "";
 const TMUX = "/opt/homebrew/bin/tmux";
+const AFPLAY = "/usr/bin/afplay";
+const WIT_APP = resolve(HOME, "Applications/Wit.app");
+const NOTIFY_SOUND = resolve(HOME, ".config/wt/ringtone.mp3");
 
 /**
  * Check whether the given tmux session has a desktop client attached.
@@ -24,9 +25,10 @@ function hasDesktopClient(session: string): boolean {
 }
 
 /**
- * Send a macOS notification via terminal-notifier.
+ * Send a macOS notification with the Wit icon.
  * Only sends if the session has a desktop tmux client (i.e. a Ghostty tab).
  * When clicked, focuses the matching Ghostty tab via AppleScript.
+ * Plays the user's selected ringtone sound.
  */
 export function sendMacNotification(opts: {
   title: string;
@@ -42,34 +44,38 @@ export function sendMacNotification(opts: {
     return;
   }
 
-  // Write an AppleScript file that finds and selects the matching Ghostty tab.
-  // Using a file avoids shell quoting issues with session names.
+  // Play the notification sound
+  execFile(AFPLAY, [NOTIFY_SOUND], (err) => {
+    if (err) console.error("Notification sound failed:", err.message);
+  });
+
+  // Write AppleScript that selects the matching tab, then activates Ghostty.
+  // select tab before activate so the correct tab is visible when the window appears.
   const escapedSession = session.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   const slug = session.replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase();
   const scriptPath = join(tmpdir(), `wt-focus-${slug}.applescript`);
   writeFileSync(scriptPath, `tell application "Ghostty"
-    activate
     repeat with w in windows
         repeat with t in tabs of w
             if name of t is "${escapedSession}" then
                 select tab t
-                activate window w
-                return
             end if
         end repeat
     end repeat
+    activate
 end tell
 `);
 
-  const args: string[] = [
+  // Launch via `open` so macOS registers the app properly for notification clicks
+  const args = [
+    WIT_APP, "--args",
     "-title", title,
     "-message", body,
-    "-sound", "default",
     "-group", `wt-${session}`,
     "-execute", `/usr/bin/osascript '${scriptPath}'`,
   ];
 
-  execFile(WIT_NOTIFIER, args, (err) => {
+  execFile("open", args, (err) => {
     if (err) {
       console.error("Mac notification failed:", err.message);
     }
