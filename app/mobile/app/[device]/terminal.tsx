@@ -14,6 +14,7 @@ import {
   Animated,
   AppState,
   Modal,
+  Linking,
 } from "react-native";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { WebView } from "react-native-webview";
@@ -97,7 +98,7 @@ const SKILLS: Skill[] = [
   { name: "owner-pr", label: "owner-pr", icon: "📦", category: "ship", needsArgs: false, description: "Create PR via Graphite" },
   { name: "yeet-mode", label: "yeet", icon: "⚡", category: "ship", needsArgs: true, description: "Branch → implement → PR → Slack" },
   { name: "address-comments", label: "address", icon: "💬", category: "review", needsArgs: false, description: "Fix PR review comments and reply" },
-  { name: "pr-review", label: "pr-review", icon: "👀", category: "review", needsArgs: false, description: "Request review from teammate" },
+  { name: "pr-review", label: "pr-review", icon: "👀", category: "review", needsArgs: true, description: "Request review from teammate" },
   { name: "pr-monitor", label: "pr-monitor", icon: "🔄", category: "review", needsArgs: true, description: "Watch PR CI and fix failures" },
   { name: "architect-doctor", label: "architect", icon: "🏗", category: "code", needsArgs: false, description: "Architecture review and refactor plan" },
   { name: "simplify", label: "simplify", icon: "✨", category: "code", needsArgs: false, description: "Review changed code for quality" },
@@ -112,6 +113,7 @@ const SKILLS: Skill[] = [
   { name: "rename", label: "rename", icon: "✏️", category: "ops", needsArgs: false, description: "Rename tmux session from context" },
   { name: "collab", label: "collab", icon: "🤝", category: "ops", needsArgs: true, description: "Collaborate with Claude in pane" },
   { name: "generally-manage", label: "manage", icon: "📋", category: "ops", needsArgs: true, description: "Orchestrate plan across panes" },
+  { name: "fast", label: "fast", icon: "↯", category: "config", needsArgs: false, description: "Toggle Claude fast mode" },
   { name: "df-new-secret", label: "df-secret", icon: "🔑", category: "config", needsArgs: false, description: "Discover and register new secrets" },
   { name: "schedule", label: "schedule", icon: "⏰", category: "config", needsArgs: true, description: "Create/manage scheduled agents" },
   { name: "update-config", label: "config", icon: "⚙️", category: "config", needsArgs: true, description: "Configure Claude Code settings" },
@@ -189,6 +191,7 @@ export default function TerminalScreen() {
   const dotPulse = useRef(new Animated.Value(1)).current;
   const [webViewReady, setWebViewReady] = useState(false);
   const [initialized, setInitialized] = useState(false);
+  const [webViewKey, setWebViewKey] = useState(0);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sessionIdx, setSessionIdx] = useState(parseInt(initialIndex ?? "0", 10));
   const [paneIdx, setPaneIdx] = useState(parseInt(initialPaneIndex ?? "0", 10));
@@ -199,6 +202,7 @@ export default function TerminalScreen() {
   const [skillPaletteVisible, setSkillPaletteVisible] = useState(false);
   const [liveIsClaudeCode, setLiveIsClaudeCode] = useState<boolean | null>(null);
   const [selectionText, setSelectionText] = useState<string | null>(null);
+  const linkTappedRef = useRef(false);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialScrollRef = useRef(false);
   const inputExpandAnim = useRef(new Animated.Value(0)).current; // 0=bubbles visible, 1=bubbles collapsed
@@ -254,9 +258,11 @@ export default function TerminalScreen() {
     }
   }, [connected, initialized, dotPulse]);
 
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   useEffect(() => {
-    const showSub = Keyboard.addListener("keyboardDidShow", () => {
+    const showSub = Keyboard.addListener("keyboardDidShow", (e) => {
       setKeyboardVisible(true);
+      setKeyboardHeight(e.endCoordinates.height);
       if (activePage === 2) goToPage(1);
       if (!bubblesForced.current) {
         Animated.spring(inputExpandAnim, { toValue: 1, useNativeDriver: false, tension: 120, friction: 14 }).start();
@@ -264,6 +270,7 @@ export default function TerminalScreen() {
     });
     const hideSub = Keyboard.addListener("keyboardDidHide", () => {
       setKeyboardVisible(false);
+      setKeyboardHeight(0);
       bubblesForced.current = false;
       Animated.spring(inputExpandAnim, { toValue: 0, useNativeDriver: false, tension: 120, friction: 14 }).start();
     });
@@ -287,13 +294,30 @@ export default function TerminalScreen() {
 
   useEffect(() => { reconnect(); }, [reconnect]);
 
-  // Auto-reconnect when app returns from background
+  // Heartbeat: periodically ping the WebView to check if its web content process
+  // is alive. iOS can kill the process at any time (backgrounding, memory pressure).
+  // If the ping isn't acked within 1s, remount the WebView entirely.
+  const heartbeatAlive = useRef(true);
   useEffect(() => {
-    const sub = AppState.addEventListener("change", (state) => {
-      if (state === "active" && initialized) reconnect();
-    });
-    return () => sub.remove();
-  }, [initialized, reconnect]);
+    if (!initialized) return;
+    const interval = setInterval(() => {
+      // Only check when app is active
+      if (AppState.currentState !== "active") return;
+      heartbeatAlive.current = false;
+      webViewRef.current?.injectJavaScript(
+        `window.ReactNativeWebView.postMessage(JSON.stringify({type:"pong"}));true;`
+      );
+      setTimeout(() => {
+        if (!heartbeatAlive.current) {
+          setWebViewReady(false);
+          setInitialized(false);
+          setConnected(false);
+          setWebViewKey((k) => k + 1);
+        }
+      }, 250);
+    }, 500);
+    return () => clearInterval(interval);
+  }, [initialized]);
 
   // Poll to detect process changes (e.g. launching/exiting claude)
   useEffect(() => {
@@ -312,11 +336,12 @@ export default function TerminalScreen() {
     try {
       const msg = JSON.parse(event.nativeEvent.data);
       if (msg.type === "ready") setWebViewReady(true);
+      if (msg.type === "pong") { heartbeatAlive.current = true; return; }
       if (msg.type === "connected") setConnected(true);
       if (msg.type === "disconnected") {
         setConnected(false);
         if (msg.unexpected) {
-          // Auto-reconnect after unexpected disconnect (app backgrounded, network blip)
+          // WebSocket dropped unexpectedly — try to reconnect
           setTimeout(() => reconnect(), 500);
         }
       }
@@ -325,6 +350,10 @@ export default function TerminalScreen() {
       }
       if (msg.type === "selectionReady") {
         if (msg.text) setSelectionText(msg.text);
+      }
+      if (msg.type === "linkTap" && msg.url) {
+        linkTappedRef.current = true;
+        Linking.openURL(msg.url);
       }
       if (msg.type === "swipe") {
         if (msg.direction === "left") switchPane(1);
@@ -585,13 +614,24 @@ export default function TerminalScreen() {
 
     // Tap detection: small movement, short duration, not after scroll
     if (Math.abs(dx) < 10 && Math.abs(dy) < 10 && elapsed < 400 && Date.now() - t.lastScrollTime > 300) {
+      // Ask the WebView to check for a URL at the tap coordinates.
+      // Uses postMessage → handleMsg → findLinkAtTap which reads multiple lines
+      // to handle URLs that wrap across terminal rows.
+      const locX = e.nativeEvent.locationX;
+      const locY = e.nativeEvent.locationY;
+      linkTappedRef.current = false;
+      webViewRef.current?.postMessage(JSON.stringify({ type: "findLink", x: locX, y: locY }));
       setTimeout(() => {
+        if (linkTappedRef.current) {
+          linkTappedRef.current = false;
+          return;
+        }
         if (keyboardVisible) {
           Keyboard.dismiss();
         } else {
           inputRef.current?.focus();
         }
-      }, 0);
+      }, 200);
     }
   }, [switchPane, keyboardVisible, currentSession]);
 
@@ -604,10 +644,8 @@ export default function TerminalScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
+    <View
       style={[styles.container, { backgroundColor: bgColor }]}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={0}
     >
       {/* Custom header */}
       <View style={[styles.header, { paddingTop: insets.top, backgroundColor: bgColor }]}>
@@ -684,6 +722,7 @@ export default function TerminalScreen() {
         opacity: swipeOpacity,
       }]}>
         <WebView
+          key={webViewKey}
           ref={webViewRef}
           source={{ html: TERMINAL_HTML }}
           style={[
@@ -691,6 +730,12 @@ export default function TerminalScreen() {
             { backgroundColor: bgColor },
           ]}
           onMessage={handleWebViewMessage}
+          onContentProcessDidTerminate={() => {
+            setWebViewReady(false);
+            setInitialized(false);
+            setConnected(false);
+            setWebViewKey((k) => k + 1);
+          }}
           javaScriptEnabled
           originWhitelist={["*"]}
           scrollEnabled={false}
@@ -724,7 +769,7 @@ export default function TerminalScreen() {
       </Animated.View>
 
       {/* Swipeable input bar: commands <-> text input <-> keystrokes (infinite cycle) */}
-      <View style={[styles.inputContainer, { paddingBottom: keyboardVisible ? 4 : Math.max(insets.bottom, 8) }]}>
+      <View style={[styles.inputContainer, { paddingBottom: keyboardVisible ? 4 : Math.max(insets.bottom, 8), transform: [{ translateY: -keyboardHeight }] }]}>
         <View style={styles.pageDots}>
           {[0, 1, 2].map((p) => (
             <Pressable key={p} onPress={() => goToPage(p)} hitSlop={8}>
@@ -829,13 +874,16 @@ export default function TerminalScreen() {
                 onPress={async () => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   const result = await ImagePicker.launchImageLibraryAsync({
-                    mediaTypes: ["images"],
+                    mediaTypes: ["images", "videos"],
                     quality: 1,
                   });
                   if (result.canceled || !result.assets[0]) return;
                   const asset = result.assets[0];
-                  const filename = asset.fileName ?? `photo.${asset.mimeType?.split("/")[1] ?? "png"}`;
-                  const mimeType = asset.mimeType ?? "image/png";
+                  const isVideo = asset.type === "video";
+                  const fallbackExt = isVideo ? "mp4" : "png";
+                  const fallbackMime = isVideo ? "video/mp4" : "image/png";
+                  const filename = asset.fileName ?? `file.${asset.mimeType?.split("/")[1] ?? fallbackExt}`;
+                  const mimeType = asset.mimeType ?? fallbackMime;
                   try {
                     const remotePath = await uploadFile(device!, asset.uri, filename, mimeType);
                     sendRaw(remotePath);
@@ -1107,7 +1155,7 @@ export default function TerminalScreen() {
           onSessionsUpdate={(updated) => setSessions(updated)}
         />
       )}
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
