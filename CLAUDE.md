@@ -164,6 +164,56 @@ Viewing a pane on mobile must NOT affect the tmux layout on the desktop. The gro
 - `@wt_config_path` read via `tmux show-options -t <session> -v` with `stdio: ["pipe", "pipe", "pipe"]` to suppress stderr for sessions without the option
 - `tmux list-panes -t <session> -s` with `-s` flag to list panes across all windows
 
+## Deploying the Mobile App
+
+The app uses EAS Build for binary distribution and EAS Update for over-the-air (OTA) JS updates.
+
+### OTA Update (JS-only changes)
+
+For changes that don't add/remove native modules or modify `app.json` plugins — i.e., most feature work, UI tweaks, bug fixes:
+
+```bash
+cd app/mobile
+npx eas-cli update --branch preview --platform ios --message "description of change" --non-interactive
+```
+
+The `preview` channel/branch is what installed builds listen to. The runtime fingerprint must match the installed build's fingerprint for the update to apply. Check with:
+```bash
+npx expo-updates fingerprint:generate --platform ios  # extract .hash from JSON output
+npx eas-cli branch:list                                # compare against latest build's fingerprint
+```
+
+If fingerprints match → OTA works. If they differ (native dependency changed) → need a new build.
+
+### New Build (native changes)
+
+When you add/remove native modules, change `app.json` plugins, or update Expo SDK — the fingerprint changes and a new binary build is required:
+
+```bash
+cd app/mobile
+npx eas-cli build --profile preview --platform ios --non-interactive
+```
+
+After the build finishes, publish an OTA update to the new fingerprint's branch so future JS changes apply:
+```bash
+npx eas-cli update --branch preview --platform ios --message "description" --non-interactive
+```
+
+The install link will be in the build output or at:
+`https://expo.dev/accounts/owner-com/projects/wt-companion/builds/<build-id>`
+
+### Branch considerations
+
+- **Main branch / main repo**: Deploy directly. OTA updates go out immediately.
+- **Feature branches / worktrees**: Code changes are local. To deploy from a feature branch, the OTA update or build will bundle whatever JS is in the working directory — it doesn't need to be on `main`. Just run the same commands from the worktree. The fingerprint is computed from the local file state, not the git branch.
+- After merging a feature branch to `main`, publish a fresh OTA update from `main` so the `preview` branch has the merged state.
+
+### Key details
+
+- **Channel**: `preview` (set in `eas.json` under the `preview` build profile)
+- **Runtime version policy**: `fingerprint` (auto-computed from native dependencies)
+- **EAS project**: `owner-com/wt-companion` (`a671143b-7d4c-4f99-ab53-b24634e0c7e1`)
+
 ## Dependencies & Gotchas
 
 ### Server

@@ -43,6 +43,7 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
     <div id="terminal"></div>
     <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
     <script>
       var term = null;
       var fitAddon = null;
@@ -69,7 +70,12 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
           allowProposedApi: true,
         });
 
+        var webLinksAddon = new WebLinksAddon.WebLinksAddon(function(e, url) {
+          e.preventDefault();
+          notifyRN({ type: "linkTap", url: url });
+        });
         term.loadAddon(fitAddon);
+        term.loadAddon(webLinksAddon);
         term.open(document.getElementById("terminal"));
         setTimeout(function() { fitAddon.fit(); }, 100);
 
@@ -228,6 +234,46 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
         return { col: col, row: row };
       }
 
+      function findLinkAtTap(x, y) {
+        if (!term) return null;
+        var cell = coordsToCell(x, y);
+        var bufRow = cell.row + term.buffer.active.viewportY;
+        // Read a window of lines around the tap to handle wrapped URLs
+        var startRow = Math.max(0, bufRow - 2);
+        var endRow = Math.min(term.buffer.active.length - 1, bufRow + 2);
+        var lines = [];
+        var rowOffsets = []; // character offset where each row starts in the joined string
+        var offset = 0;
+        for (var r = startRow; r <= endRow; r++) {
+          var line = term.buffer.active.getLine(r);
+          if (!line) continue;
+          var text = line.translateToString();
+          rowOffsets.push({ row: r, start: offset, len: text.length });
+          lines.push(text);
+          offset += text.length;
+        }
+        var joined = lines.join("");
+        // Find the character position of the tap in the joined string
+        var tapOffset = 0;
+        for (var i = 0; i < rowOffsets.length; i++) {
+          if (rowOffsets[i].row === bufRow) {
+            tapOffset = rowOffsets[i].start + cell.col;
+            break;
+          }
+        }
+        // Find all URLs in the joined text and check if tap falls within one
+        var urlRe = new RegExp("https?://[^" + "\\\\s)\\\\]>'" + '"]+', "g");
+        var match;
+        while ((match = urlRe.exec(joined)) !== null) {
+          var urlStart = match.index;
+          var urlEnd = urlStart + match[0].length;
+          if (tapOffset >= urlStart && tapOffset < urlEnd) {
+            return match[0];
+          }
+        }
+        return null;
+      }
+
       var intentionalDisconnect = false;
       function disconnect() { intentionalDisconnect = true; if (ws) { ws.close(); ws = null; } }
 
@@ -262,6 +308,11 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
             connect(msg.wsUrl);
           }
           else if (msg.type === "disconnect") disconnect();
+          else if (msg.type === "findLink") {
+            var url = findLinkAtTap(msg.x, msg.y);
+            if (url) notifyRN({ type: "linkTap", url: url });
+            else notifyRN({ type: "linkTap", url: null });
+          }
           else if (msg.type === "selectStart") {
             var cell = coordsToCell(msg.x, msg.y);
             selectAnchor = cell;
