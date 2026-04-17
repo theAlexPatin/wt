@@ -259,11 +259,15 @@ export default function TerminalScreen() {
   }, [connected, initialized, dotPulse]);
 
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const activePageRef = useRef(activePage);
+  useEffect(() => { activePageRef.current = activePage; }, [activePage]);
+  const goToPageRef = useRef(goToPage);
+  useEffect(() => { goToPageRef.current = goToPage; }, [goToPage]);
   useEffect(() => {
     const showSub = Keyboard.addListener("keyboardDidShow", (e) => {
       setKeyboardVisible(true);
       setKeyboardHeight(e.endCoordinates.height);
-      if (activePage === 2) goToPage(1);
+      if (activePageRef.current === 2) goToPageRef.current(1);
       if (!bubblesForced.current) {
         Animated.spring(inputExpandAnim, { toValue: 1, useNativeDriver: false, tension: 120, friction: 14 }).start();
       }
@@ -275,7 +279,7 @@ export default function TerminalScreen() {
       Animated.spring(inputExpandAnim, { toValue: 0, useNativeDriver: false, tension: 120, friction: 14 }).start();
     });
     return () => { showSub.remove(); hideSub.remove(); };
-  }, [activePage, goToPage, inputExpandAnim]);
+  }, [inputExpandAnim]);
 
   // Connect to terminal when session/pane changes AND webview is ready
   const reconnect = useCallback(() => {
@@ -645,7 +649,7 @@ export default function TerminalScreen() {
 
   return (
     <View
-      style={[styles.container, { backgroundColor: bgColor }]}
+      style={[styles.container, { backgroundColor: bgColor, paddingBottom: keyboardHeight }]}
     >
       {/* Custom header */}
       <View style={[styles.header, { paddingTop: insets.top, backgroundColor: bgColor }]}>
@@ -769,7 +773,7 @@ export default function TerminalScreen() {
       </Animated.View>
 
       {/* Swipeable input bar: commands <-> text input <-> keystrokes (infinite cycle) */}
-      <View style={[styles.inputContainer, { paddingBottom: keyboardVisible ? 4 : Math.max(insets.bottom, 8), transform: [{ translateY: -keyboardHeight }] }]}>
+      <View style={[styles.inputContainer, { paddingBottom: keyboardVisible ? 4 : Math.max(insets.bottom, 8) }]}>
         <View style={styles.pageDots}>
           {[0, 1, 2].map((p) => (
             <Pressable key={p} onPress={() => goToPage(p)} hitSlop={8}>

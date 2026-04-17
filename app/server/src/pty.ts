@@ -1,5 +1,6 @@
 import * as pty from "node-pty";
 import { execFileSync } from "child_process";
+import { readFileSync } from "fs";
 
 export interface TerminalSession {
   ptyProcess: pty.IPty;
@@ -79,6 +80,26 @@ export function createPaneSession(
   } catch {
     try { tmux(tmuxPath, ["set-option", "-sa", "terminal-overrides", ",xterm-256color:Tc"]); } catch {}
   }
+  // tmux 3.2+ uses terminal-features instead of terminal-overrides
+  try {
+    tmux(tmuxPath, ["set-option", "-as", "terminal-features", "xterm-256color:RGB"]);
+  } catch {}
+
+  // Re-apply window-style with the paneColor hex after enabling true color.
+  // tmux may have parsed the original bg= value using 256-color approximation;
+  // re-setting it now forces re-evaluation with Tc/RGB enabled.
+  try {
+    let paneColor: string | undefined;
+    const configPath = tmux(tmuxPath, ["show-options", "-t", tmuxSession, "-v", "@wt_config_path"]);
+    if (configPath) {
+      const config = JSON.parse(readFileSync(configPath, "utf-8"));
+      paneColor = config.paneColor;
+    }
+    if (paneColor) {
+      tmux(tmuxPath, ["set-option", "-w", "-t", `${tempName}:${windowIndex}`, "window-style", `bg=${paneColor}`]);
+      tmux(tmuxPath, ["set-option", "-w", "-t", `${tempName}:${windowIndex}`, "window-active-style", `bg=${paneColor}`]);
+    }
+  } catch {}
 
   // Select the correct window and pane, then zoom
   try {
@@ -116,7 +137,7 @@ export function createPaneSession(
     cols,
     rows,
     cwd: process.env.HOME || "/",
-    env: { ...process.env, TERM: "xterm-256color" } as Record<string, string>,
+    env: { ...process.env, TERM: "xterm-256color", COLORTERM: "truecolor" } as Record<string, string>,
   });
 
   const onData = ptyProcess.onData((data: string) => {
