@@ -166,6 +166,8 @@ Viewing a pane on mobile must NOT affect the tmux layout on the desktop. The gro
 
 ## Deploying the Mobile App
 
+**Always send Expo build/install links to Alex via Slack DM (user ID: `U02T1C46B9N`) so he can open them on his devices.**
+
 The app uses EAS Build for binary distribution and EAS Update for over-the-air (OTA) JS updates.
 
 ### OTA Update (JS-only changes)
