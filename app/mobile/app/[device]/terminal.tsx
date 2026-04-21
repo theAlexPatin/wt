@@ -191,6 +191,7 @@ export default function TerminalScreen() {
   const dotPulse = useRef(new Animated.Value(1)).current;
   const [webViewReady, setWebViewReady] = useState(false);
   const [initialized, setInitialized] = useState(false);
+  const initializedRef = useRef(false);
   const [webViewKey, setWebViewKey] = useState(0);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sessionIdx, setSessionIdx] = useState(parseInt(initialIndex ?? "0", 10));
@@ -288,40 +289,31 @@ export default function TerminalScreen() {
     if (!pane) return;
     const wsUrl = terminalWsUrl(device, currentSession.id, pane.windowIndex, pane.index, 80, 24);
     const msg = JSON.stringify({
-      type: initialized ? "reconnect" : "init",
+      type: initializedRef.current ? "reconnect" : "init",
       wsUrl,
       paneColor: currentSession.paneColor,
     });
     webViewRef.current?.postMessage(msg);
-    if (!initialized) setInitialized(true);
-  }, [device, currentSession, paneIdx, webViewReady, initialized]);
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      setInitialized(true);
+    }
+  }, [device, currentSession, paneIdx, webViewReady]);
 
   useEffect(() => { reconnect(); }, [reconnect]);
 
-  // Heartbeat: periodically ping the WebView to check if its web content process
-  // is alive. iOS can kill the process at any time (backgrounding, memory pressure).
-  // If the ping isn't acked within 1s, remount the WebView entirely.
-  const heartbeatAlive = useRef(true);
   useEffect(() => {
-    if (!initialized) return;
-    const interval = setInterval(() => {
-      // Only check when app is active
-      if (AppState.currentState !== "active") return;
-      heartbeatAlive.current = false;
-      webViewRef.current?.injectJavaScript(
-        `window.ReactNativeWebView.postMessage(JSON.stringify({type:"pong"}));true;`
-      );
-      setTimeout(() => {
-        if (!heartbeatAlive.current) {
-          setWebViewReady(false);
-          setInitialized(false);
-          setConnected(false);
-          setWebViewKey((k) => k + 1);
-        }
-      }, 250);
-    }, 500);
-    return () => clearInterval(interval);
-  }, [initialized]);
+    const sub = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active" && initializedRef.current) {
+        setTimeout(() => {
+          webViewRef.current?.postMessage(
+            JSON.stringify({ type: "checkAndReconnect" })
+          );
+        }, 300);
+      }
+    });
+    return () => sub.remove();
+  }, []);
 
   // Poll to detect process changes (e.g. launching/exiting claude)
   useEffect(() => {
@@ -340,15 +332,8 @@ export default function TerminalScreen() {
     try {
       const msg = JSON.parse(event.nativeEvent.data);
       if (msg.type === "ready") setWebViewReady(true);
-      if (msg.type === "pong") { heartbeatAlive.current = true; return; }
       if (msg.type === "connected") setConnected(true);
-      if (msg.type === "disconnected") {
-        setConnected(false);
-        if (msg.unexpected) {
-          // WebSocket dropped unexpectedly — try to reconnect
-          setTimeout(() => reconnect(), 500);
-        }
-      }
+      if (msg.type === "disconnected") setConnected(false);
       if (msg.type === "paneInfo") {
         setLiveIsClaudeCode(!!msg.isClaudeCode);
       }
@@ -736,6 +721,7 @@ export default function TerminalScreen() {
           onMessage={handleWebViewMessage}
           onContentProcessDidTerminate={() => {
             setWebViewReady(false);
+            initializedRef.current = false;
             setInitialized(false);
             setConnected(false);
             setWebViewKey((k) => k + 1);

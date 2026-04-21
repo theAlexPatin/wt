@@ -206,6 +206,7 @@ export function handleMessage(
         handleScroll(session, parsed.lines);
         return;
       }
+      if (parsed.type === "ping") return;
     } catch {
       // Not JSON — terminal input
     }

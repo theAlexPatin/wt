@@ -48,6 +48,9 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
       var term = null;
       var fitAddon = null;
       var ws = null;
+      var lastWsUrl = null;
+      var autoReconnectTimer = null;
+      var keepAliveTimer = null;
 
       function init(config) {
         var bgColor = config.paneColor || "#0a0a0f";
@@ -93,6 +96,9 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
       }
 
       function connect(url) {
+        if (autoReconnectTimer) { clearTimeout(autoReconnectTimer); autoReconnectTimer = null; }
+        if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
+        lastWsUrl = url;
         intentionalDisconnect = false;
         ws = new WebSocket(url);
         var scrollTimer = null;
@@ -188,7 +194,15 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
           setTimeout(checkReady, 300);
         }
 
-        ws.onopen = function() { sendResize(); notifyRN({ type: "connected" }); };
+        ws.onopen = function() {
+          sendResize();
+          notifyRN({ type: "connected" });
+          keepAliveTimer = setInterval(function() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: "ping" }));
+            }
+          }, 30000);
+        };
         ws.onmessage = function(e) {
           var data = e.data;
           // First messages from server are metadata — swallow and forward to RN
@@ -211,9 +225,20 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
           }
         };
         ws.onclose = function() {
+          if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
           reveal();
-          notifyRN({ type: "disconnected", unexpected: !intentionalDisconnect });
+          var wasUnexpected = !intentionalDisconnect;
+          notifyRN({ type: "disconnected", unexpected: wasUnexpected });
           intentionalDisconnect = false;
+          if (wasUnexpected && lastWsUrl) {
+            autoReconnectTimer = setTimeout(function() {
+              autoReconnectTimer = null;
+              if (!ws || ws.readyState !== WebSocket.OPEN) {
+                if (term) term.clear();
+                connect(lastWsUrl);
+              }
+            }, 2000);
+          }
         };
         ws.onerror = function() { reveal(); notifyRN({ type: "error" }); };
       }
@@ -275,7 +300,12 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
       }
 
       var intentionalDisconnect = false;
-      function disconnect() { intentionalDisconnect = true; if (ws) { ws.close(); ws = null; } }
+      function disconnect() {
+        intentionalDisconnect = true;
+        if (autoReconnectTimer) { clearTimeout(autoReconnectTimer); autoReconnectTimer = null; }
+        if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
+        if (ws) { ws.close(); ws = null; }
+      }
 
       function sendResize() {
         if (term && ws && ws.readyState === WebSocket.OPEN) {
@@ -308,6 +338,15 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
             connect(msg.wsUrl);
           }
           else if (msg.type === "disconnect") disconnect();
+          else if (msg.type === "checkAndReconnect") {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              notifyRN({ type: "connected" });
+            } else if (lastWsUrl) {
+              if (autoReconnectTimer) { clearTimeout(autoReconnectTimer); autoReconnectTimer = null; }
+              if (term) term.clear();
+              connect(lastWsUrl);
+            }
+          }
           else if (msg.type === "findLink") {
             var url = findLinkAtTap(msg.x, msg.y);
             if (url) notifyRN({ type: "linkTap", url: url });
