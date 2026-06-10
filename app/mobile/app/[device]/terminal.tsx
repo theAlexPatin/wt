@@ -260,26 +260,42 @@ export default function TerminalScreen() {
   }, [connected, initialized, dotPulse]);
 
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const keyboardHeightRef = useRef(0);
+  const keyboardVisibleRef = useRef(false);
   const activePageRef = useRef(activePage);
   useEffect(() => { activePageRef.current = activePage; }, [activePage]);
   const goToPageRef = useRef(goToPage);
   useEffect(() => { goToPageRef.current = goToPage; }, [goToPage]);
   useEffect(() => {
-    const showSub = Keyboard.addListener("keyboardDidShow", (e) => {
+    const handleShow = (height: number) => {
       setKeyboardVisible(true);
-      setKeyboardHeight(e.endCoordinates.height);
+      keyboardVisibleRef.current = true;
+      setKeyboardHeight(height);
+      keyboardHeightRef.current = height;
       if (activePageRef.current === 2) goToPageRef.current(1);
       if (!bubblesForced.current) {
         Animated.spring(inputExpandAnim, { toValue: 1, useNativeDriver: false, tension: 120, friction: 14 }).start();
       }
+    };
+    const showSub = Keyboard.addListener("keyboardDidShow", (e) => {
+      handleShow(e.endCoordinates.height);
+    });
+    // keyboardDidShow doesn't refire when iOS restores the keyboard after an
+    // app switch, and custom keyboards (Wispr Flow) resize after showing.
+    // Frame changes are the authoritative height source for those cases.
+    const frameSub = Keyboard.addListener("keyboardDidChangeFrame", (e) => {
+      const h = Math.max(0, Math.round(Dimensions.get("window").height - e.endCoordinates.screenY));
+      if (h > 0 && h !== keyboardHeightRef.current) handleShow(h);
     });
     const hideSub = Keyboard.addListener("keyboardDidHide", () => {
       setKeyboardVisible(false);
+      keyboardVisibleRef.current = false;
       setKeyboardHeight(0);
+      keyboardHeightRef.current = 0;
       bubblesForced.current = false;
       Animated.spring(inputExpandAnim, { toValue: 0, useNativeDriver: false, tension: 120, friction: 14 }).start();
     });
-    return () => { showSub.remove(); hideSub.remove(); };
+    return () => { showSub.remove(); frameSub.remove(); hideSub.remove(); };
   }, [inputExpandAnim]);
 
   // Connect to terminal when session/pane changes AND webview is ready
@@ -302,14 +318,39 @@ export default function TerminalScreen() {
 
   useEffect(() => { reconnect(); }, [reconnect]);
 
+  const keyboardBeforeBackground = useRef(false);
+  const backgroundedAt = useRef(0);
   useEffect(() => {
     const sub = AppState.addEventListener("change", (nextState) => {
-      if (nextState === "active" && initializedRef.current) {
-        setTimeout(() => {
-          webViewRef.current?.postMessage(
-            JSON.stringify({ type: "checkAndReconnect" })
-          );
-        }, 300);
+      if (nextState === "background" || nextState === "inactive") {
+        keyboardBeforeBackground.current = keyboardVisibleRef.current;
+        if (backgroundedAt.current === 0) backgroundedAt.current = Date.now();
+      }
+      if (nextState === "active") {
+        const backgroundMs = backgroundedAt.current ? Date.now() - backgroundedAt.current : 0;
+        backgroundedAt.current = 0;
+        if (initializedRef.current) {
+          // Long backgrounds: socket is almost certainly dead, skip the
+          // liveness probe and reconnect outright
+          const force = backgroundMs > 30000;
+          setTimeout(() => {
+            webViewRef.current?.postMessage(
+              JSON.stringify({ type: "checkAndReconnect", force })
+            );
+          }, 300);
+        }
+        if (keyboardBeforeBackground.current) {
+          setTimeout(() => inputRef.current?.focus(), 100);
+          // If the keyboard is back on screen but no show/frame event
+          // re-synced its height (input would be hidden under it), force a
+          // full re-present cycle to get fresh keyboard events
+          setTimeout(() => {
+            if (keyboardHeightRef.current === 0) {
+              inputRef.current?.blur();
+              setTimeout(() => inputRef.current?.focus(), 80);
+            }
+          }, 700);
+        }
       }
     });
     return () => sub.remove();

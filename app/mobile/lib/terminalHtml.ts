@@ -51,6 +51,9 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
       var lastWsUrl = null;
       var autoReconnectTimer = null;
       var keepAliveTimer = null;
+      var keepAliveWatchdog = null;
+      var probeTimer = null;
+      var lastDataTime = 0;
 
       function init(config) {
         var bgColor = config.paneColor || "#0a0a0f";
@@ -98,9 +101,13 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
       function connect(url) {
         if (autoReconnectTimer) { clearTimeout(autoReconnectTimer); autoReconnectTimer = null; }
         if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
+        if (keepAliveWatchdog) { clearTimeout(keepAliveWatchdog); keepAliveWatchdog = null; }
+        if (probeTimer) { clearTimeout(probeTimer); probeTimer = null; }
         lastWsUrl = url;
-        intentionalDisconnect = false;
-        ws = new WebSocket(url);
+        // Keep a local reference: every handler bails if a newer socket has
+        // replaced it, so events from superseded connections can't double-fire
+        var socket = new WebSocket(url);
+        ws = socket;
         var scrollTimer = null;
         var initialLoad = true;
         var showingProgress = false;
@@ -194,17 +201,28 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
           setTimeout(checkReady, 300);
         }
 
-        ws.onopen = function() {
+        socket.onopen = function() {
+          if (ws !== socket) return;
           sendResize();
           notifyRN({ type: "connected" });
           keepAliveTimer = setInterval(function() {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: "ping" }));
-            }
-          }, 30000);
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            var pingAt = Date.now();
+            try { ws.send(JSON.stringify({ type: "ping" })); } catch (err) { forceReconnect(); return; }
+            // Watchdog: if nothing (pong or output) arrives after a ping,
+            // the socket is half-open — tear down and reconnect
+            if (keepAliveWatchdog) clearTimeout(keepAliveWatchdog);
+            keepAliveWatchdog = setTimeout(function() {
+              keepAliveWatchdog = null;
+              if (lastDataTime < pingAt) forceReconnect();
+            }, 3000);
+          }, 10000);
         };
-        ws.onmessage = function(e) {
+        socket.onmessage = function(e) {
+          if (ws !== socket) return;
+          lastDataTime = Date.now();
           var data = e.data;
+          if (data === '{"type":"pong"}') return;
           // First messages from server are metadata — swallow and forward to RN
           if (initialLoad && !gotMeta) {
             try {
@@ -224,23 +242,31 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
             }
           }
         };
-        ws.onclose = function() {
+        socket.onclose = function() {
+          // Intentional closes null out ws first, so reaching here with
+          // ws === socket means the connection died on its own
+          if (ws !== socket) return;
+          ws = null;
           if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
+          if (keepAliveWatchdog) { clearTimeout(keepAliveWatchdog); keepAliveWatchdog = null; }
+          if (probeTimer) { clearTimeout(probeTimer); probeTimer = null; }
           reveal();
-          var wasUnexpected = !intentionalDisconnect;
-          notifyRN({ type: "disconnected", unexpected: wasUnexpected });
-          intentionalDisconnect = false;
-          if (wasUnexpected && lastWsUrl) {
+          notifyRN({ type: "disconnected", unexpected: true });
+          if (lastWsUrl) {
             autoReconnectTimer = setTimeout(function() {
               autoReconnectTimer = null;
-              if (!ws || ws.readyState !== WebSocket.OPEN) {
+              if (!ws) {
                 if (term) term.clear();
                 connect(lastWsUrl);
               }
             }, 2000);
           }
         };
-        ws.onerror = function() { reveal(); notifyRN({ type: "error" }); };
+        socket.onerror = function() {
+          if (ws !== socket) return;
+          reveal();
+          notifyRN({ type: "error" });
+        };
       }
 
       var selectAnchor = null;
@@ -299,12 +325,48 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
         return null;
       }
 
-      var intentionalDisconnect = false;
       function disconnect() {
-        intentionalDisconnect = true;
         if (autoReconnectTimer) { clearTimeout(autoReconnectTimer); autoReconnectTimer = null; }
         if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
-        if (ws) { ws.close(); ws = null; }
+        if (keepAliveWatchdog) { clearTimeout(keepAliveWatchdog); keepAliveWatchdog = null; }
+        if (probeTimer) { clearTimeout(probeTimer); probeTimer = null; }
+        if (ws) {
+          // Null out before close so this socket's onclose sees itself
+          // superseded and skips the auto-reconnect path
+          var old = ws;
+          ws = null;
+          try { old.close(); } catch (err) {}
+          notifyRN({ type: "disconnected" });
+        }
+      }
+
+      function forceReconnect() {
+        if (!lastWsUrl) return;
+        disconnect();
+        if (term) term.clear();
+        connect(lastWsUrl);
+      }
+
+      // Verify a socket that claims OPEN is actually alive. After iOS
+      // suspends the app the TCP connection can be dead while readyState
+      // still reports OPEN — send a ping and require any data within 1.5s.
+      function probeConnection() {
+        if (!lastWsUrl) return;
+        if (!ws) { forceReconnect(); return; }
+        if (ws.readyState === WebSocket.CONNECTING) return; // connect already in flight
+        if (ws.readyState !== WebSocket.OPEN) { forceReconnect(); return; }
+        if (probeTimer) return;
+        var probeStart = Date.now();
+        try { ws.send(JSON.stringify({ type: "ping" })); } catch (err) { forceReconnect(); return; }
+        probeTimer = setTimeout(function() {
+          probeTimer = null;
+          if (lastDataTime < probeStart) forceReconnect();
+          else {
+            // Socket alive — repaint in case the renderer stalled while suspended
+            if (term) term.refresh(0, term.rows - 1);
+            notifyRN({ type: "connected" });
+          }
+        }, 1500);
       }
 
       function sendResize() {
@@ -339,13 +401,9 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
           }
           else if (msg.type === "disconnect") disconnect();
           else if (msg.type === "checkAndReconnect") {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-              notifyRN({ type: "connected" });
-            } else if (lastWsUrl) {
-              if (autoReconnectTimer) { clearTimeout(autoReconnectTimer); autoReconnectTimer = null; }
-              if (term) term.clear();
-              connect(lastWsUrl);
-            }
+            if (msg.force) forceReconnect();
+            else if (ws && ws.readyState === WebSocket.OPEN) probeConnection();
+            else forceReconnect();
           }
           else if (msg.type === "findLink") {
             var url = findLinkAtTap(msg.x, msg.y);
@@ -391,6 +449,16 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
 
       window.addEventListener("message", function(e) { handleMsg(e.data); });
       document.addEventListener("message", function(e) { handleMsg(e.data); });
+
+      // Self-driven resume check: fires inside the WebView the moment iOS
+      // unsuspends it, independent of RN's AppState timing. Repaint and
+      // verify the socket is actually alive.
+      document.addEventListener("visibilitychange", function() {
+        if (document.visibilityState === "visible" && term) {
+          term.refresh(0, term.rows - 1);
+          probeConnection();
+        }
+      });
 
       // Signal to RN that we're ready
       notifyRN({ type: "ready" });

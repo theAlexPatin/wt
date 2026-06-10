@@ -9,6 +9,7 @@ import {
   PanResponder,
 } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
+import * as Updates from "expo-updates";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useStore } from "../lib/store";
 import { checkHealth } from "../lib/api";
@@ -16,6 +17,11 @@ import type { Device } from "../lib/types";
 import { GestureHelpButton } from "../lib/GestureHelp";
 
 const ACTION_WIDTH = 72;
+
+// Which JS bundle is running — embedded build vs OTA update timestamp
+const JS_VERSION = Updates.createdAt
+  ? `js ${Updates.createdAt.toLocaleDateString([], { month: "numeric", day: "numeric" })} ${Updates.createdAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${(Updates.updateId ?? "").slice(0, 8)}`
+  : "js embedded";
 
 function SwipeableCard({
   device,
@@ -205,6 +211,7 @@ export default function DeviceListScreen() {
           </View>
         }
       />
+      <Text style={styles.versionText}>{JS_VERSION}</Text>
       <Pressable style={styles.addButton} onPress={handleScan}>
         <Text style={styles.addButtonText}>Scan QR Code</Text>
       </Pressable>
@@ -288,6 +295,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   addButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  versionText: {
+    position: "absolute",
+    bottom: 14,
+    alignSelf: "center",
+    color: "#444",
+    fontSize: 10,
+    fontFamily: "monospace",
+  },
 
   // Camera
   camera: { flex: 1 },

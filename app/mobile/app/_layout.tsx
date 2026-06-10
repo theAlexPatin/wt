@@ -3,6 +3,7 @@ import { Stack, router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { View, Image, Text, StyleSheet, AppState } from "react-native";
 import * as Notifications from "expo-notifications";
+import * as Updates from "expo-updates";
 import { useStore } from "../lib/store";
 import { registerPushToken } from "../lib/api";
 
@@ -59,6 +60,19 @@ export default function RootLayout() {
   const responseListener = useRef<any>(null);
 
   useEffect(() => {
+    // Apply pending OTA updates on launch instead of waiting for the
+    // launch-after-next (expo-updates' default behavior)
+    (async () => {
+      if (__DEV__) return;
+      try {
+        const check = await Updates.checkForUpdateAsync();
+        if (check.isAvailable) {
+          await Updates.fetchUpdateAsync();
+          await Updates.reloadAsync();
+        }
+      } catch {}
+    })();
+
     getPushToken().then((token) => {
       if (token) {
         setPushToken(token);

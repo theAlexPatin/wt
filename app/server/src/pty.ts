@@ -8,6 +8,7 @@ export interface TerminalSession {
   /** Pane target on the original session (not the temp grouped session) */
   originalPaneTarget: string;
   tmuxPath: string;
+  ws: WsSink;
   dispose: () => void;
   /** Timer for exiting copy-mode after scroll idle */
   scrollExitTimer?: ReturnType<typeof setTimeout>;
@@ -153,6 +154,7 @@ export function createPaneSession(
     paneTarget,
     originalPaneTarget,
     tmuxPath,
+    ws,
     dispose() {
       onData.dispose();
       onExit.dispose();
@@ -206,7 +208,11 @@ export function handleMessage(
         handleScroll(session, parsed.lines);
         return;
       }
-      if (parsed.type === "ping") return;
+      if (parsed.type === "ping") {
+        // Client uses pong to detect half-open sockets after iOS suspension
+        try { session.ws.send(JSON.stringify({ type: "pong" })); } catch {}
+        return;
+      }
     } catch {
       // Not JSON — terminal input
     }

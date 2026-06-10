@@ -64,6 +64,7 @@ Interactive terminal connection to a specific pane:
 4. On disconnect: **unzooms the pane first** (zoom is per-window, shared across the group), then kills the temp session
 
 Accepts JSON resize messages: `{ "type": "resize", "cols": N, "rows": N }`.
+Accepts `{ "type": "ping" }` and replies `{ "type": "pong" }` — the client uses this to detect half-open sockets (e.g. after iOS app suspension).
 All other messages are treated as raw terminal input (written directly to PTY).
 
 Temp sessions are named `wt-mobile-<counter>` where counter starts at `Date.now()`. Stale sessions from previous server runs are cleaned up on startup via `cleanupStaleSessions()`.
@@ -91,7 +92,7 @@ Temp sessions are named `wt-mobile-<counter>` where counter starts at `Date.now(
 - **Pane bar** (only when >1 pane): horizontal pane dots + "◂ Pane N / M ▸" label (carets dim at boundaries)
 - **Full-screen swipe overlay**: transparent touch overlay — vertical drag scrolls terminal, horizontal swipe switches panes
 - **Text selection**: long press (500ms) → drag to select text → Copy/Paste popup appears on release
-- **Auto-reconnect**: WebSocket reconnects automatically on app resume (background/foreground switch, screen wake)
+- **Auto-reconnect**: on app resume, RN sends `checkAndReconnect` to the WebView. Short backgrounds (<30s) probe the socket with a ping and expect data within 1.5s — a live connection is left untouched, a half-open one (readyState lies after iOS suspension) is torn down and reconnected. Long backgrounds (`force: true`) reconnect unconditionally. A 30s keepalive ping with a 5s pong watchdog catches dead sockets while foregrounded
 - **Swipeable input bar** at bottom: horizontal `ScrollView` with `pagingEnabled`, three pages (infinite cycle):
   - **Command palette**: quick-launch buttons (cc, wt, codex, amp, owner, df)
   - **Text input**: ESC (`✕`) + clip (`📎`) bubbles, glass `BlurView` pill with monospace `TextInput` + colored send button
@@ -116,6 +117,7 @@ RN sends messages to WebView via `postMessage`:
 - `{ type: "reconnect", wsUrl, paneColor }` — subsequent connections: closes existing WS, clears terminal, reconnects
 - `{ type: "input", data }` — terminal input from the Glass input bar
 - `{ type: "disconnect" }` — close WebSocket
+- `{ type: "checkAndReconnect", force }` — verify connection liveness after app resume; probes with ping/pong unless `force` is true (reconnects outright)
 - `{ type: "scroll", lines }` — scroll xterm.js viewport (positive = up, negative = down)
 - `{ type: "selectStart", x, y }` — begin text selection at coordinates
 - `{ type: "selectMove", x, y }` — extend selection to coordinates
@@ -146,6 +148,8 @@ The bottom input bar is a horizontal `ScrollView` with `pagingEnabled` containin
 - No `Keyboard.dismiss()` calls in page change handlers
 
 The keyboard is controlled exclusively by tapping the terminal overlay (focus/blur toggle) and the `inputWrap` Pressable (focus). Page switching is fully independent.
+
+**Keyboard height tracking**: layout padding comes from keyboard events, with `keyboardDidChangeFrame` as the authoritative height source — `keyboardDidShow` alone misses two cases: iOS restoring the keyboard after an app switch (no re-fire), and custom keyboards like Wispr Flow that resize after showing. On app resume, if the height never re-syncs within 700ms, the input is blurred and refocused to force a fresh keyboard presentation cycle.
 
 ### Pane Isolation (Desktop Safety)
 
