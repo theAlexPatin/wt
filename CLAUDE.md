@@ -65,6 +65,9 @@ Interactive terminal connection to a specific pane:
 
 Accepts JSON resize messages: `{ "type": "resize", "cols": N, "rows": N }`.
 Accepts `{ "type": "ping" }` and replies `{ "type": "pong" }` — the client uses this to detect half-open sockets (e.g. after iOS app suspension).
+Accepts `{ "type": "scroll", "lines": N }` (positive = up/older, negative = down/newer). Scrolling is hybrid, chosen per the pane's current `#{mouse_any_flag}` (cached 250ms):
+- **Mouse-reporting apps** (Claude Code, vim, less): synthesized SGR mouse-wheel events (`\x1b[<64…M` up / `65` down) are written to the PTY, so the app scrolls its own view. Required because these apps render on the alternate screen, where tmux copy-mode has no scrollback to move through.
+- **Plain panes** (shell prompt): tmux copy-mode (`copy-mode` + `send-keys -N count -X scroll-up`), with a 1.5s debounced `cancel` back to the live view. `dispose()` also cancels copy-mode on the original pane.
 All other messages are treated as raw terminal input (written directly to PTY).
 
 Temp sessions are named `wt-mobile-<counter>` where counter starts at `Date.now()`. Stale sessions from previous server runs are cleaned up on startup via `cleanupStaleSessions()`.
@@ -118,7 +121,7 @@ RN sends messages to WebView via `postMessage`:
 - `{ type: "input", data }` — terminal input from the Glass input bar
 - `{ type: "disconnect" }` — close WebSocket
 - `{ type: "checkAndReconnect", force }` — verify connection liveness after app resume; probes with ping/pong unless `force` is true (reconnects outright)
-- `{ type: "scroll", lines }` — scroll xterm.js viewport (positive = up, negative = down)
+- `{ type: "scroll", lines }` — forwarded to the server, which scrolls the tmux pane (positive = up, negative = down); see the `WS /terminal` route for the hybrid mouse-wheel / copy-mode handling
 - `{ type: "selectStart", x, y }` — begin text selection at coordinates
 - `{ type: "selectMove", x, y }` — extend selection to coordinates
 - `{ type: "selectEnd" }` — finalize selection, triggers `selectionReady` response
@@ -131,11 +134,11 @@ The `initialized` state flag tracks whether "init" has been sent. The `webViewRe
 WebView consumes all touch events (xterm.js + tmux mouse mode), so gesture detection inside the WebView doesn't work. The solution is a **full-screen transparent touch overlay** using raw `onTouchStart/Move/End` events (not PanResponder — avoids `trackedTouchCount` warnings):
 
 - **Tap** → toggle keyboard (focus/blur TextInput)
-- **Vertical drag** → scroll terminal history (velocity-accelerated, via xterm.js local scrollback — no server round-trip)
+- **Vertical drag** → scroll terminal history (velocity-accelerated; sends `{ type: "scroll", lines }` to the server, which drives the tmux pane)
 - **Horizontal swipe** → switch pane (swipe left = next, right = previous)
 - **Long press (500ms) + drag** → text selection (coordinates mapped to terminal cells via xterm.js render dimensions, selection drawn with `term.select()`)
 
-Scrolling uses xterm.js's built-in scrollback buffer (10,000 lines), NOT tmux copy-mode. This avoids flashing, snap-to-bottom, and server round-trips. New output appends to the buffer without disrupting scroll position.
+Scrolling is driven server-side against the real tmux pane (see the `WS /terminal` route), not the xterm.js local buffer. This is what lets you scroll a pane's true tmux scrollback and — via synthesized mouse-wheel events — the internal scrollback of alternate-screen apps like Claude Code, which have no tmux history to copy-mode through.
 
 ### Swipeable Input Bar
 
