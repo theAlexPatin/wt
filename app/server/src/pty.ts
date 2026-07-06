@@ -9,8 +9,14 @@ export interface TerminalSession {
   originalPaneTarget: string;
   tmuxPath: string;
   ws: WsSink;
+  /** Current terminal dimensions — used to aim synthesized mouse-wheel events */
+  cols: number;
+  rows: number;
+  /** Cached #{mouse_any_flag} for the pane, and when it was last read */
+  mouseAppActive?: boolean;
+  mouseCheckedAt?: number;
   dispose: () => void;
-  /** Timer for exiting copy-mode after scroll idle */
+  /** Timer for exiting copy-mode after scroll idle (copy-mode fallback only) */
   scrollExitTimer?: ReturnType<typeof setTimeout>;
 }
 
@@ -155,6 +161,8 @@ export function createPaneSession(
     originalPaneTarget,
     tmuxPath,
     ws,
+    cols,
+    rows,
     dispose() {
       onData.dispose();
       onExit.dispose();
@@ -202,6 +210,8 @@ export function handleMessage(
       const parsed = JSON.parse(message);
       if (parsed.type === "resize" && parsed.cols && parsed.rows) {
         session.ptyProcess.resize(parsed.cols, parsed.rows);
+        session.cols = parsed.cols;
+        session.rows = parsed.rows;
         return;
       }
       if (parsed.type === "scroll" && parsed.lines) {
@@ -222,15 +232,52 @@ export function handleMessage(
   }
 }
 
-/** Scroll tmux pane via copy-mode (single redraw per batch) */
+/**
+ * Scroll the pane, choosing the mechanism per the app running in it.
+ *
+ * Panes whose app has enabled mouse reporting (Claude Code, vim, less, …)
+ * render on the alternate screen and keep their own scrollback — tmux copy-mode
+ * has no history to scroll there, so a copy-mode scroll is a silent no-op. For
+ * those we synthesize SGR mouse-wheel events and write them straight to the PTY,
+ * exactly as a desktop terminal would; tmux forwards them and the app scrolls
+ * its own view.
+ *
+ * Plain panes (a shell at a prompt) don't want mouse events, so we drive tmux
+ * copy-mode directly — precise 1-line-per-step scrolling through the pane's real
+ * scrollback, with a debounced exit back to the live view.
+ *
+ * #{mouse_any_flag} flips when an app is launched or exits, so we re-read it, but
+ * cache for 250ms so a fast drag doesn't spawn a tmux process per scroll batch.
+ */
 function handleScroll(session: TerminalSession, lines: number) {
   const { tmuxPath, paneTarget } = session;
   const count = Math.abs(lines);
   if (count === 0) return;
 
-  // positive = scroll up (older), negative = scroll down (newer)
-  const cmd = lines > 0 ? "scroll-up" : "scroll-down";
+  const now = Date.now();
+  if (session.mouseCheckedAt === undefined || now - session.mouseCheckedAt > 250) {
+    try {
+      session.mouseAppActive =
+        tmux(tmuxPath, ["display-message", "-p", "-t", paneTarget, "#{mouse_any_flag}"]) === "1";
+    } catch {}
+    session.mouseCheckedAt = now;
+  }
 
+  if (session.mouseAppActive) {
+    // SGR mouse encoding: button 64 = wheel up, 65 = wheel down. Coordinates are
+    // 1-based; aim at the middle of the (zoomed, full-screen) pane so the event
+    // always lands inside it. One event per line keeps parity with the copy-mode
+    // path; tune on-device if a wheel notch scrolls the app more than one line.
+    const button = lines > 0 ? 64 : 65;
+    const col = Math.max(1, Math.floor(session.cols / 2));
+    const row = Math.max(1, Math.floor(session.rows / 2));
+    const event = `\x1b[<${button};${col};${row}M`;
+    try { session.ptyProcess.write(event.repeat(count)); } catch {}
+    return;
+  }
+
+  // Copy-mode fallback for plain panes: positive = up (older), negative = down.
+  const cmd = lines > 0 ? "scroll-up" : "scroll-down";
   try {
     // Enter copy-mode (no-op if already in it)
     tmux(tmuxPath, ["copy-mode", "-t", paneTarget]);
