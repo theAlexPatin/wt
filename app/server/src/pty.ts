@@ -233,6 +233,14 @@ export function handleMessage(
 }
 
 /**
+ * Wheel notches per requested scroll line for the mouse-app path. Apps scroll
+ * more than one line per notch (~1.5 for Claude Code / vim), so we send fewer
+ * notches than lines to keep on-screen speed close to what the client asked for.
+ * Lower = slower. Tune here if the feel is off.
+ */
+const WHEEL_NOTCH_SCALE = 0.7;
+
+/**
  * Scroll the pane, choosing the mechanism per the app running in it.
  *
  * Panes whose app has enabled mouse reporting (Claude Code, vim, less, …)
@@ -266,13 +274,14 @@ function handleScroll(session: TerminalSession, lines: number) {
   if (session.mouseAppActive) {
     // SGR mouse encoding: button 64 = wheel up, 65 = wheel down. Coordinates are
     // 1-based; aim at the middle of the (zoomed, full-screen) pane so the event
-    // always lands inside it. One event per line keeps parity with the copy-mode
-    // path; tune on-device if a wheel notch scrolls the app more than one line.
+    // always lands inside it. Damp the notch count (see WHEEL_NOTCH_SCALE) since
+    // apps scroll multiple lines per notch; always send at least one.
     const button = lines > 0 ? 64 : 65;
     const col = Math.max(1, Math.floor(session.cols / 2));
     const row = Math.max(1, Math.floor(session.rows / 2));
     const event = `\x1b[<${button};${col};${row}M`;
-    try { session.ptyProcess.write(event.repeat(count)); } catch {}
+    const notches = Math.max(1, Math.round(count * WHEEL_NOTCH_SCALE));
+    try { session.ptyProcess.write(event.repeat(notches)); } catch {}
     return;
   }
 
