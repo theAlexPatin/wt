@@ -35,6 +35,12 @@ const MAX_INPUT_LINES = 4;
 const MAX_INPUT_HEIGHT = LINE_HEIGHT * MAX_INPUT_LINES;
 const SCREEN_WIDTH = Dimensions.get("window").width;
 
+// Vertical scroll velocity acceleration. multiplier = 1 + min(velocity * ACCEL, ACCEL_CAP),
+// where velocity is smoothed px/ms. At rest the multiplier is 1 (the base 1:1 feel);
+// faster drags ramp up to 1 + ACCEL_CAP. Lower ACCEL = gentler ramp, lower CAP = lower top speed.
+const SCROLL_ACCEL = 2;
+const SCROLL_ACCEL_CAP = 3;
+
 const HOTKEYS_ROW_1 = [
   { label: "ESC", data: "\x1b" },
   { label: "Tab", data: "\t" },
@@ -570,7 +576,7 @@ export default function TerminalScreen() {
         t.velocity = t.velocity * 0.6 + instantV * 0.4;
       }
 
-      const multiplier = 1 + Math.min(t.velocity * 4, 4);
+      const multiplier = 1 + Math.min(t.velocity * SCROLL_ACCEL, SCROLL_ACCEL_CAP);
       t.scrollAccum += dy * multiplier;
       t.lastMoveTime = now;
       t.lastMoveY = e.nativeEvent.pageY;
